@@ -1,11 +1,12 @@
 from sqlmodel import SQLModel, Field, select, metadata
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, event
-from typing import Type, TypeVar, Optional, Any, List, Dict
+from typing import Type, TypeVar, Optional, Any, List, Dict, Literal
 from sqlalchemy import update as sqlalchemy_update
 import contextlib
 import os
 from datetime import datetime
+from pathlib import Path
 
 # Define a TypeVar for the model class
 T = TypeVar("T", bound="EasyModel")
@@ -18,44 +19,97 @@ def _update_updated_at(session, flush_context, instances):
         if isinstance(instance, EasyModel) and hasattr(instance, 'updated_at'):
             instance.updated_at = datetime.utcnow()
 
-# DATABASE SETUP & CONFIGURATION
-def get_database_url() -> str:
-    """Get database URL from environment variables with fallback to default values."""
-    user = os.getenv('POSTGRES_USER', 'postgres')
-    password = os.getenv('POSTGRES_PASSWORD', 'postgres')
-    host = os.getenv('POSTGRES_HOST', 'localhost')
-    port = os.getenv('POSTGRES_PORT', '5432')
-    db = os.getenv('POSTGRES_DB', 'postgres')
-    
-    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+class DatabaseConfig:
+    """Configuration for database connection."""
+    _instance = None
+    _engine = None
+    _session_maker = None
 
-# Creating async engine and session with SQLModel
-async_engine = create_async_engine(
-    get_database_url(),
-    pool_size=10,
-    max_overflow=30,
-    pool_timeout=30,
-    pool_recycle=1800,
-    pool_pre_ping=True
-)
+    def __init__(self):
+        self.db_type: Literal["postgresql", "sqlite"] = "postgresql"
+        self.postgres_user: str = os.getenv('POSTGRES_USER', 'postgres')
+        self.postgres_password: str = os.getenv('POSTGRES_PASSWORD', 'postgres')
+        self.postgres_host: str = os.getenv('POSTGRES_HOST', 'localhost')
+        self.postgres_port: str = os.getenv('POSTGRES_PORT', '5432')
+        self.postgres_db: str = os.getenv('POSTGRES_DB', 'postgres')
+        self.sqlite_file: str = os.getenv('SQLITE_FILE', 'database.db')
 
-AsyncSessionLocal = sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+    @classmethod
+    def get_instance(cls) -> 'DatabaseConfig':
+        """Get singleton instance of DatabaseConfig."""
+        if cls._instance is None:
+            cls._instance = DatabaseConfig()
+        return cls._instance
+
+    def configure_sqlite(self, db_file: str) -> None:
+        """Configure SQLite database."""
+        self.db_type = "sqlite"
+        self.sqlite_file = db_file
+        self._reset_engine()
+
+    def configure_postgres(
+        self,
+        user: str = None,
+        password: str = None,
+        host: str = None,
+        port: str = None,
+        database: str = None
+    ) -> None:
+        """Configure PostgreSQL database."""
+        self.db_type = "postgresql"
+        if user: self.postgres_user = user
+        if password: self.postgres_password = password
+        if host: self.postgres_host = host
+        if port: self.postgres_port = port
+        if database: self.postgres_db = database
+        self._reset_engine()
+
+    def _reset_engine(self) -> None:
+        """Reset engine and session maker."""
+        DatabaseConfig._engine = None
+        DatabaseConfig._session_maker = None
+
+    def get_connection_url(self) -> str:
+        """Get database connection URL based on configuration."""
+        if self.db_type == "sqlite":
+            return f"sqlite+aiosqlite:///{self.sqlite_file}"
+        else:
+            return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    def get_engine(self):
+        """Get or create SQLAlchemy engine."""
+        if DatabaseConfig._engine is None:
+            DatabaseConfig._engine = create_async_engine(
+                self.get_connection_url(),
+                pool_size=10 if self.db_type == "postgresql" else None,
+                max_overflow=30 if self.db_type == "postgresql" else None,
+                pool_timeout=30 if self.db_type == "postgresql" else None,
+                pool_recycle=1800 if self.db_type == "postgresql" else None,
+                pool_pre_ping=True,
+            )
+        return DatabaseConfig._engine
+
+    def get_session_maker(self):
+        """Get or create session maker."""
+        if DatabaseConfig._session_maker is None:
+            DatabaseConfig._session_maker = sessionmaker(
+                bind=self.get_engine(),
+                class_=AsyncSession,
+                expire_on_commit=False
+            )
+        return DatabaseConfig._session_maker
+
+# Create default instance
+db_config = DatabaseConfig.get_instance()
 
 async def init_db():
     """Initialize the database by creating all declared tables."""
-    async with async_engine.begin() as conn:
+    async with db_config.get_engine().begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
 class EasyModel(SQLModel):
     """
     Base model class providing common async database operations.
-    
-    This class extends SQLModel to provide convenient async methods for
-    common database operations like create, read, update, and delete.
     """
     
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -65,7 +119,7 @@ class EasyModel(SQLModel):
     @contextlib.asynccontextmanager
     async def get_session(cls):
         """Provide a transactional scope around a series of operations."""
-        async with AsyncSessionLocal() as session:
+        async with db_config.get_session_maker()() as session:
             yield session
 
     @classmethod

@@ -2,8 +2,20 @@ import pytest
 import os
 from sqlmodel import Field
 from datetime import datetime
-from async_easy_model import EasyModel, init_db
+from async_easy_model import EasyModel, init_db, db_config
 import asyncio
+import tempfile
+from pathlib import Path
+
+# Configure SQLite for testing
+@pytest.fixture(autouse=True)
+def setup_test_db():
+    # Create a temporary directory for the test database
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db_path = Path(tmp_dir) / "test.db"
+        db_config.configure_sqlite(str(db_path))
+        yield
+        # Cleanup is handled by tempfile.TemporaryDirectory
 
 # Test model
 class TestUser(EasyModel, table=True):
@@ -20,6 +32,9 @@ async def test_init_db():
 
 @pytest.mark.asyncio
 async def test_crud_operations():
+    # Initialize database
+    await init_db()
+    
     # Test data
     test_data = {
         "username": "test_user",

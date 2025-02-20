@@ -30,6 +30,7 @@ setup(
         "sqlmodel>=0.0.8",
         "sqlalchemy>=1.4.0",
         "asyncpg>=0.25.0",
+        "aiosqlite>=0.19.0",
     ],
-    keywords=["orm", "sqlmodel", "database", "async", "postgresql"],
+    keywords=["orm", "sqlmodel", "database", "async", "postgresql", "sqlite"],
 )

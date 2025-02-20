@@ -6,7 +6,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 
 - Easy-to-use async database operations
 - Built on top of SQLModel and SQLAlchemy
-- PostgreSQL support with asyncpg
+- Support for both PostgreSQL and SQLite databases
 - Common CRUD operations out of the box
 - Session management with context managers
 - Type hints for better IDE support
@@ -21,10 +21,22 @@ pip install async-easy-model
 ## Quick Start
 
 ```python
-from async_easy_model import EasyModel, init_db
+from async_easy_model import EasyModel, init_db, db_config
 from sqlmodel import Field
 from typing import Optional
 from datetime import datetime
+
+# Configure your database (choose one)
+# For SQLite:
+db_config.configure_sqlite("database.db")
+# For PostgreSQL:
+db_config.configure_postgres(
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="5432",
+    database="your_database"
+)
 
 # Define your model
 class User(EasyModel, table=True):
@@ -58,14 +70,44 @@ async def main():
 
 ## Configuration
 
-Set your database connection details using environment variables:
+You can configure the database connection in two ways:
 
+### 1. Using Environment Variables
+
+For PostgreSQL:
 ```bash
 POSTGRES_USER=your_user
 POSTGRES_PASSWORD=your_password
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=your_database
+```
+
+For SQLite:
+```bash
+SQLITE_FILE=database.db
+```
+
+### 2. Using Configuration Methods
+
+For PostgreSQL:
+```python
+from async_easy_model import db_config
+
+db_config.configure_postgres(
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="5432",
+    database="your_database"
+)
+```
+
+For SQLite:
+```python
+from async_easy_model import db_config
+
+db_config.configure_sqlite("database.db")
 ```
 
 ## Contributing

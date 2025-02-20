@@ -15,13 +15,13 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 ## Installation
 
 ```bash
-pip install easy-model
+pip install async-easy-model
 ```
 
 ## Quick Start
 
 ```python
-from easy_model import EasyModel, init_db
+from async_easy_model import EasyModel, init_db
 from sqlmodel import Field
 from typing import Optional
 from datetime import datetime
@@ -45,13 +45,7 @@ async def main():
         "username": "john_doe",
         "email": "john@example.com"
     })
-
-    # Get user by id
-    user = await User.get_by_id(1)
-
-    # Get user by attribute
-    user = await User.get_by_attribute(username="john_doe")
-
+    
     # Update user - updated_at will be automatically set
     updated_user = await User.update(1, {
         "email": "new_email@example.com"

@@ -2,7 +2,7 @@ import pytest
 import os
 from sqlmodel import Field
 from datetime import datetime
-from easy_model import EasyModel, init_db
+from async_easy_model import EasyModel, init_db
 import asyncio
 
 # Test model

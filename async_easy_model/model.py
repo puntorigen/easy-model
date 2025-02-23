@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import update as sqlalchemy_update, event
 from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union
 import contextlib
@@ -175,9 +175,9 @@ class EasyModel(SQLModel):
         return self.model_dump()
 
 # Register an event listener to update 'updated_at' on instance modifications.
-@event.listens_for(AsyncSession, "before_flush")
-def _update_updated_at(session, flush_context, instances):
-    for instance in session.dirty:
+@event.listens_for(Session, "before_flush")
+def _update_updated_at(sync_session, flush_context, instances):
+    for instance in sync_session.dirty:
         if isinstance(instance, EasyModel) and hasattr(instance, "updated_at"):
             instance.updated_at = datetime.now(tz.utc)
 

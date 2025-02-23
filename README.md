@@ -45,6 +45,7 @@ class User(EasyModel, table=True):
     email: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default=None)  # Will be automatically updated
+    **Note:** The `updated_at` field is optional since it is included by default in all EasyModel models. However, if you choose to override it, please ensure it always defines a default value as it is automatically updated. If specified, missing a default value will cause tests to fail.
 
 # Initialize your database (creates all tables)
 async def setup():

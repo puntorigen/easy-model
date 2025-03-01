@@ -1,7 +1,7 @@
 from sqlmodel import SQLModel, Field, select, Relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, Session, selectinload, joinedload
-from sqlalchemy import update as sqlalchemy_update, event
+from sqlalchemy import update as sqlalchemy_update, event, desc, asc
 from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple
 import contextlib
 import os
@@ -130,20 +130,73 @@ class EasyModel(SQLModel):
             relationship_fields.append(name)
                 
         return relationship_fields
+    
+    @classmethod
+    def _apply_order_by(cls, statement, order_by: Optional[Union[str, List[str]]] = None):
+        """
+        Apply ordering to a select statement.
+        
+        Args:
+            statement: The select statement to apply ordering to
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
+                      
+        Returns:
+            The statement with ordering applied
+        """
+        if not order_by:
+            return statement
+            
+        # Convert single string to list
+        if isinstance(order_by, str):
+            order_by = [order_by]
+            
+        for field_name in order_by:
+            descending = False
+            
+            # Check if descending order is requested
+            if field_name.startswith('-'):
+                descending = True
+                field_name = field_name[1:]
+                
+            # Handle relationship fields (e.g. 'author.name')
+            if '.' in field_name:
+                rel_name, attr_name = field_name.split('.', 1)
+                if hasattr(cls, rel_name) and rel_name in cls._get_relationship_fields():
+                    rel_class = getattr(cls, rel_name).prop.mapper.class_
+                    if hasattr(rel_class, attr_name):
+                        order_attr = getattr(rel_class, attr_name)
+                        statement = statement.join(rel_class)
+                        statement = statement.order_by(desc(order_attr) if descending else asc(order_attr))
+            # Handle regular fields
+            elif hasattr(cls, field_name):
+                order_attr = getattr(cls, field_name)
+                statement = statement.order_by(desc(order_attr) if descending else asc(order_attr))
+                
+        return statement
 
     @classmethod
-    async def all(cls: Type[T], include_relationships: bool = False) -> List[T]:
+    async def all(
+        cls: Type[T], 
+        include_relationships: bool = False,
+        order_by: Optional[Union[str, List[str]]] = None
+    ) -> List[T]:
         """
         Retrieve all records of this model.
         
         Args:
             include_relationships: If True, eagerly load all relationships
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
             
         Returns:
             A list of all model instances
         """
         async with cls.get_session() as session:
             statement = select(cls)
+            
+            # Apply ordering
+            statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
                 for rel_name in cls._get_relationship_fields():
@@ -153,18 +206,27 @@ class EasyModel(SQLModel):
             return result.scalars().all()
     
     @classmethod
-    async def first(cls: Type[T], include_relationships: bool = False) -> Optional[T]:
+    async def first(
+        cls: Type[T], 
+        include_relationships: bool = False,
+        order_by: Optional[Union[str, List[str]]] = None
+    ) -> Optional[T]:
         """
         Retrieve the first record of this model.
         
         Args:
             include_relationships: If True, eagerly load all relationships
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
             
         Returns:
             The first model instance or None if no records exist
         """
         async with cls.get_session() as session:
             statement = select(cls)
+            
+            # Apply ordering
+            statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
                 for rel_name in cls._get_relationship_fields():
@@ -174,19 +236,32 @@ class EasyModel(SQLModel):
             return result.scalars().first()
     
     @classmethod
-    async def limit(cls: Type[T], count: int, include_relationships: bool = False) -> List[T]:
+    async def limit(
+        cls: Type[T], 
+        count: int, 
+        include_relationships: bool = False,
+        order_by: Optional[Union[str, List[str]]] = None
+    ) -> List[T]:
         """
         Retrieve a limited number of records of this model.
         
         Args:
             count: Maximum number of records to retrieve
             include_relationships: If True, eagerly load all relationships
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
             
         Returns:
             A list of model instances up to the specified count
         """
         async with cls.get_session() as session:
-            statement = select(cls).limit(count)
+            statement = select(cls)
+            
+            # Apply ordering
+            statement = cls._apply_order_by(statement, order_by)
+            
+            # Apply limit
+            statement = statement.limit(count)
             
             if include_relationships:
                 for rel_name in cls._get_relationship_fields():
@@ -223,6 +298,7 @@ class EasyModel(SQLModel):
         cls: Type[T], 
         all: bool = False, 
         include_relationships: bool = False,
+        order_by: Optional[Union[str, List[str]]] = None,
         **kwargs
     ) -> Union[Optional[T], List[T]]:
         """
@@ -231,6 +307,8 @@ class EasyModel(SQLModel):
         Args:
             all: If True, return all matching records, otherwise return only the first one
             include_relationships: If True, eagerly load all relationships
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
             **kwargs: Attribute filters (field=value)
             
         Returns:
@@ -238,6 +316,9 @@ class EasyModel(SQLModel):
         """
         async with cls.get_session() as session:
             statement = select(cls).filter_by(**kwargs)
+            
+            # Apply ordering
+            statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
                 for rel_name in cls._get_relationship_fields():

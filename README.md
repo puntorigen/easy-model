@@ -13,6 +13,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - Automatic `created_at` and `updated_at` field management
 - **Enhanced relationship handling with eager loading and nested operations**
 - **Convenient query methods for retrieving records (all, first, limit)**
+- **Flexible ordering of query results with support for relationship fields**
 
 ## Installation
 
@@ -154,6 +155,15 @@ print(f"Total users: {len(all_users)}")
 
 # Get all users with their relationships
 all_users_with_relations = await User.all(include_relationships=True)
+
+# Get all users ordered by username
+ordered_users = await User.all(order_by="username")
+
+# Get all users ordered by creation date (newest first)
+newest_users = await User.all(order_by="-created_at")
+
+# Order by multiple fields
+complex_order = await User.all(order_by=["last_name", "first_name"])
 ```
 
 ### Getting the First Record
@@ -166,6 +176,9 @@ if first_user:
 
 # Get the first user with relationships
 first_user_with_relations = await User.first(include_relationships=True)
+
+# Get the oldest user (ordered by created_at)
+oldest_user = await User.first(order_by="created_at")
 ```
 
 ### Limiting Results
@@ -177,6 +190,36 @@ print(f"Recent users: {[user.username for user in recent_users]}")
 
 # Get the first 5 users with relationships
 recent_users_with_relations = await User.limit(5, include_relationships=True)
+
+# Get the 5 most recently created users
+newest_users = await User.limit(5, order_by="-created_at")
+```
+
+### Filtering with Ordering
+
+```python
+# Get all active users ordered by username
+active_users = await User.get_by_attribute(
+    all=True, 
+    is_active=True, 
+    order_by="username"
+)
+
+# Get the most recent user in a specific category
+latest_admin = await User.get_by_attribute(
+    role="admin", 
+    order_by="-created_at"
+)
+```
+
+### Ordering by Relationship Fields
+
+```python
+# Get all books ordered by author name
+books_by_author = await Book.all(order_by="author.name")
+
+# Get users ordered by their latest post date
+users_by_post = await User.all(order_by="-posts.created_at")
 ```
 
 ## Configuration
@@ -227,6 +270,7 @@ Check out the `examples` directory for more detailed examples:
 
 - `examples/relationship_example.py`: Demonstrates the enhanced relationship handling features
 - `examples/diario_example.py`: Shows how to use relationship features with diary entries
+- `examples/query_methods_example.py`: Shows how to use the query methods with ordering
 
 ## Contributing
 

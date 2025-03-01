@@ -12,6 +12,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - Type hints for better IDE support
 - Automatic `created_at` and `updated_at` field management
 - **Enhanced relationship handling with eager loading and nested operations**
+- **Convenient query methods for retrieving records (all, first, limit)**
 
 ## Installation
 
@@ -140,6 +141,44 @@ print(f"Books: {[book['title'] for book in author_dict['books']]}")
 deep_dict = author.to_dict(include_relationships=True, max_depth=2)
 ```
 
+## Querying Records
+
+EasyModel provides convenient methods for retrieving records:
+
+### Retrieving All Records
+
+```python
+# Get all users
+all_users = await User.all()
+print(f"Total users: {len(all_users)}")
+
+# Get all users with their relationships
+all_users_with_relations = await User.all(include_relationships=True)
+```
+
+### Getting the First Record
+
+```python
+# Get the first user
+first_user = await User.first()
+if first_user:
+    print(f"First user: {first_user.username}")
+
+# Get the first user with relationships
+first_user_with_relations = await User.first(include_relationships=True)
+```
+
+### Limiting Results
+
+```python
+# Get the first 10 users
+recent_users = await User.limit(10)
+print(f"Recent users: {[user.username for user in recent_users]}")
+
+# Get the first 5 users with relationships
+recent_users_with_relations = await User.limit(5, include_relationships=True)
+```
+
 ## Configuration
 
 You can configure the database connection in two ways:
@@ -187,6 +226,7 @@ db_config.configure_sqlite("database.db")
 Check out the `examples` directory for more detailed examples:
 
 - `examples/relationship_example.py`: Demonstrates the enhanced relationship handling features
+- `examples/diario_example.py`: Shows how to use relationship features with diary entries
 
 ## Contributing
 

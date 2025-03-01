@@ -132,6 +132,70 @@ class EasyModel(SQLModel):
         return relationship_fields
 
     @classmethod
+    async def all(cls: Type[T], include_relationships: bool = False) -> List[T]:
+        """
+        Retrieve all records of this model.
+        
+        Args:
+            include_relationships: If True, eagerly load all relationships
+            
+        Returns:
+            A list of all model instances
+        """
+        async with cls.get_session() as session:
+            statement = select(cls)
+            
+            if include_relationships:
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    
+            result = await session.execute(statement)
+            return result.scalars().all()
+    
+    @classmethod
+    async def first(cls: Type[T], include_relationships: bool = False) -> Optional[T]:
+        """
+        Retrieve the first record of this model.
+        
+        Args:
+            include_relationships: If True, eagerly load all relationships
+            
+        Returns:
+            The first model instance or None if no records exist
+        """
+        async with cls.get_session() as session:
+            statement = select(cls)
+            
+            if include_relationships:
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    
+            result = await session.execute(statement)
+            return result.scalars().first()
+    
+    @classmethod
+    async def limit(cls: Type[T], count: int, include_relationships: bool = False) -> List[T]:
+        """
+        Retrieve a limited number of records of this model.
+        
+        Args:
+            count: Maximum number of records to retrieve
+            include_relationships: If True, eagerly load all relationships
+            
+        Returns:
+            A list of model instances up to the specified count
+        """
+        async with cls.get_session() as session:
+            statement = select(cls).limit(count)
+            
+            if include_relationships:
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    
+            result = await session.execute(statement)
+            return result.scalars().all()
+
+    @classmethod
     async def get_by_id(cls: Type[T], id: int, include_relationships: bool = False) -> Optional[T]:
         """
         Retrieve a record by its primary key.

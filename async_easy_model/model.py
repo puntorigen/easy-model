@@ -101,6 +101,7 @@ class EasyModel(SQLModel):
     Base model class providing common async database operations.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
     updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
 
     @classmethod

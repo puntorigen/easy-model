@@ -22,7 +22,6 @@ def setup_test_db():
 class TestUser(EasyModel, table=True):
     username: str = Field(unique=True)
     email: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 @pytest.mark.asyncio
 async def test_init_db():
@@ -43,6 +42,11 @@ async def test_crud_operations():
     user = await TestUser.insert(test_data)
     assert user.username == test_data["username"]
     assert user.email == test_data["email"]
+    assert user.created_at is not None
+    assert user.updated_at is not None
+    # created_at and updated_at should be very close at creation time
+    time_diff = abs((user.created_at - user.updated_at).total_seconds())
+    assert time_diff < 0.1  # Allow for a small difference
     
     # --- Get by ID ---
     retrieved_user = await TestUser.get_by_id(user.id)
@@ -56,6 +60,7 @@ async def test_crud_operations():
 
     # --- Update ---
     original_updated_at = found_user.updated_at
+    original_created_at = found_user.created_at
     # Wait briefly to ensure a time difference.
     await asyncio.sleep(0.1)
     updated_email = "updated@example.com"
@@ -65,6 +70,9 @@ async def test_crud_operations():
     # Confirm that updated_at has been changed.
     assert updated_user.updated_at is not None
     assert updated_user.updated_at > original_updated_at
+    # Confirm that created_at has NOT been changed.
+    assert updated_user.created_at is not None
+    assert updated_user.created_at == original_created_at
     
     # --- Delete ---
     success = await TestUser.delete(user.id)

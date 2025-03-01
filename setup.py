@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="async-easy-model",
-    version="0.0.2",
+    version="0.0.4",
     author="Pablo Schaffner",
     author_email="pablo@puntorigen.com",
     description="A simplified SQLModel-based ORM for async database operations",
@@ -31,6 +31,7 @@ setup(
         "sqlalchemy>=1.4.0",
         "asyncpg>=0.25.0",
         "aiosqlite>=0.19.0",
+        "greenlet>=3.1.1"
     ],
     keywords=["orm", "sqlmodel", "database", "async", "postgresql", "sqlite"],
 )

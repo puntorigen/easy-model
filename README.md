@@ -10,7 +10,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - Common CRUD operations out of the box
 - Session management with context managers
 - Type hints for better IDE support
-- Automatic `updated_at` field updates
+- Automatic `created_at` and `updated_at` field management
 
 ## Installation
 
@@ -43,9 +43,8 @@ class User(EasyModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True)
     email: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default=None)  # Will be automatically updated
-    **Note:** The `updated_at` field is optional since it is included by default in all EasyModel models. However, if you choose to override it, please ensure it always defines a default value as it is automatically updated. If specified, missing a default value will cause tests to fail.
+    # Note: created_at and updated_at fields are automatically included
+    # and managed by EasyModel, so you don't need to define them.
 
 # Initialize your database (creates all tables)
 async def setup():

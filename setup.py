@@ -11,7 +11,7 @@ setup(
     description="A simplified SQLModel-based ORM for async database operations",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/puntorigen/async-easy-model",
+    url="https://github.com/puntorigen/easy-model",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",

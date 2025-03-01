@@ -1,11 +1,13 @@
-from sqlmodel import SQLModel, Field, select
+from sqlmodel import SQLModel, Field, select, Relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, selectinload, joinedload
 from sqlalchemy import update as sqlalchemy_update, event
-from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union
+from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple
 import contextlib
 import os
 from datetime import datetime, timezone as tz
+import inspect
+import json
 
 T = TypeVar("T", bound="EasyModel")
 
@@ -112,41 +114,147 @@ class EasyModel(SQLModel):
             yield session
 
     @classmethod
-    async def get_by_id(cls: Type[T], id: int) -> Optional[T]:
+    def _get_relationship_fields(cls) -> List[str]:
         """
-        Retrieve a record by its primary key.
+        Get all relationship fields defined in the model.
+        Returns a list of relationship field names.
         """
-        async with cls.get_session() as session:
-            return await session.get(cls, id)
+        relationship_fields = []
+        
+        # Get the SQLModel metadata for this class
+        if not hasattr(cls, "__sqlmodel_relationships__"):
+            return []
+            
+        # Get relationship field names from SQLModel's metadata
+        for name in cls.__sqlmodel_relationships__:
+            relationship_fields.append(name)
+                
+        return relationship_fields
 
     @classmethod
-    async def get_by_attribute(cls: Type[T], all: bool = False, **kwargs) -> Union[Optional[T], List[T]]:
+    async def get_by_id(cls: Type[T], id: int, include_relationships: bool = False) -> Optional[T]:
+        """
+        Retrieve a record by its primary key.
+        
+        Args:
+            id: The primary key value
+            include_relationships: If True, eagerly load all relationships
+            
+        Returns:
+            The model instance or None if not found
+        """
+        async with cls.get_session() as session:
+            if include_relationships:
+                # Get all relationship attributes
+                statement = select(cls).where(cls.id == id)
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                result = await session.execute(statement)
+                return result.scalars().first()
+            else:
+                return await session.get(cls, id)
+
+    @classmethod
+    async def get_by_attribute(
+        cls: Type[T], 
+        all: bool = False, 
+        include_relationships: bool = False,
+        **kwargs
+    ) -> Union[Optional[T], List[T]]:
         """
         Retrieve record(s) by matching attribute values.
+        
+        Args:
+            all: If True, return all matching records, otherwise return only the first one
+            include_relationships: If True, eagerly load all relationships
+            **kwargs: Attribute filters (field=value)
+            
+        Returns:
+            A single model instance, a list of instances, or None if not found
         """
         async with cls.get_session() as session:
             statement = select(cls).filter_by(**kwargs)
+            
+            if include_relationships:
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    
             result = await session.execute(statement)
             if all:
                 return result.scalars().all()
             return result.scalars().first()
 
     @classmethod
-    async def insert(cls: Type[T], data: Dict[str, Any]) -> T:
+    async def get_with_related(
+        cls: Type[T], 
+        id: int, 
+        *related_fields: str
+    ) -> Optional[T]:
+        """
+        Retrieve a record by its primary key with specific related fields eagerly loaded.
+        
+        Args:
+            id: The primary key value
+            *related_fields: Names of relationship fields to eagerly load
+            
+        Returns:
+            The model instance with related fields loaded, or None if not found
+        """
+        async with cls.get_session() as session:
+            statement = select(cls).where(cls.id == id)
+            
+            for field_name in related_fields:
+                if hasattr(cls, field_name):
+                    statement = statement.options(selectinload(getattr(cls, field_name)))
+            
+            result = await session.execute(statement)
+            return result.scalars().first()
+
+    @classmethod
+    async def insert(cls: Type[T], data: Dict[str, Any], include_relationships: bool = False) -> T:
         """
         Insert a new record.
+        
+        Args:
+            data: Dictionary of field values
+            include_relationships: If True, return the instance with relationships loaded
+            
+        Returns:
+            The created model instance
         """
         async with cls.get_session() as session:
             obj = cls(**data)
             session.add(obj)
             await session.commit()
-            await session.refresh(obj)
-            return obj
+            
+            if include_relationships:
+                # Refresh with relationships
+                statement = select(cls).where(cls.id == obj.id)
+                for rel_name in cls._get_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                result = await session.execute(statement)
+                return result.scalars().first()
+            else:
+                await session.refresh(obj)
+                return obj
 
     @classmethod
-    async def update(cls: Type[T], id: int, data: Dict[str, Any]) -> Optional[T]:
+    async def update(
+        cls: Type[T], 
+        id: int, 
+        data: Dict[str, Any], 
+        include_relationships: bool = False
+    ) -> Optional[T]:
         """
         Update an existing record by its ID.
+        
+        Args:
+            id: The primary key value
+            data: Dictionary of field values to update
+            include_relationships: If True, return the instance with relationships loaded
+            
+        Returns:
+            The updated model instance or None if not found
         """
         async with cls.get_session() as session:
             # Explicitly update updated_at since bulk updates bypass ORM events.
@@ -154,7 +262,11 @@ class EasyModel(SQLModel):
             statement = sqlalchemy_update(cls).where(cls.id == id).values(**data).execution_options(synchronize_session="fetch")
             await session.execute(statement)
             await session.commit()
-            return await cls.get_by_id(id)
+            
+            if include_relationships:
+                return await cls.get_with_related(id, *cls._get_relationship_fields())
+            else:
+                return await cls.get_by_id(id)
 
     @classmethod
     async def delete(cls: Type[T], id: int) -> bool:
@@ -169,11 +281,112 @@ class EasyModel(SQLModel):
                 return True
             return False
 
-    def to_dict(self) -> Dict[str, Any]:
+    @classmethod
+    async def create_with_related(
+        cls: Type[T], 
+        data: Dict[str, Any],
+        related_data: Dict[str, List[Dict[str, Any]]] = None
+    ) -> T:
+        """
+        Create a model instance with related objects in a single transaction.
+        
+        Args:
+            data: Dictionary of field values for the main model
+            related_data: Dictionary mapping relationship names to lists of data dictionaries
+                          for creating related objects
+                          
+        Returns:
+            The created model instance with relationships loaded
+        """
+        if related_data is None:
+            related_data = {}
+            
+        async with cls.get_session() as session:
+            # Create the main object
+            obj = cls(**data)
+            session.add(obj)
+            await session.flush()  # Flush to get the ID
+            
+            # Create related objects
+            for rel_name, items_data in related_data.items():
+                if not hasattr(cls, rel_name):
+                    continue
+                    
+                rel_attr = getattr(cls, rel_name)
+                if not hasattr(rel_attr, "property"):
+                    continue
+                    
+                # Get the related model class and the back reference attribute
+                related_model = rel_attr.property.mapper.class_
+                back_populates = getattr(rel_attr.property, "back_populates", None)
+                
+                # Create each related object
+                for item_data in items_data:
+                    # Set the back reference if it exists
+                    if back_populates:
+                        item_data[back_populates] = obj
+                        
+                    related_obj = related_model(**item_data)
+                    session.add(related_obj)
+            
+            await session.commit()
+            
+            # Refresh with relationships
+            await session.refresh(obj, attribute_names=list(related_data.keys()))
+            return obj
+
+    def to_dict(self, include_relationships: bool = False, max_depth: int = 1) -> Dict[str, Any]:
         """
         Convert the model instance to a dictionary.
+        
+        Args:
+            include_relationships: If True, include relationship fields in the output
+            max_depth: Maximum depth for nested relationships (to prevent circular references)
+            
+        Returns:
+            Dictionary representation of the model
         """
-        return self.model_dump()
+        if max_depth <= 0:
+            return {}
+            
+        # Get basic fields
+        result = self.model_dump()
+        
+        # Add relationship fields if requested
+        if include_relationships and max_depth > 0:
+            for rel_name in self.__class__._get_relationship_fields():
+                rel_value = getattr(self, rel_name, None)
+                
+                if rel_value is None:
+                    result[rel_name] = None
+                elif isinstance(rel_value, list):
+                    # Handle one-to-many relationships
+                    result[rel_name] = [
+                        item.to_dict(include_relationships=True, max_depth=max_depth-1)
+                        for item in rel_value
+                    ]
+                else:
+                    # Handle many-to-one relationships
+                    result[rel_name] = rel_value.to_dict(
+                        include_relationships=True, 
+                        max_depth=max_depth-1
+                    )
+                    
+        return result
+        
+    async def load_related(self, *related_fields: str) -> None:
+        """
+        Eagerly load specific related fields for this instance.
+        
+        Args:
+            *related_fields: Names of relationship fields to load
+        """
+        if not related_fields:
+            return
+            
+        async with self.__class__.get_session() as session:
+            # Refresh the instance with the specified relationships
+            await session.refresh(self, attribute_names=related_fields)
 
 # Register an event listener to update 'updated_at' on instance modifications.
 @event.listens_for(Session, "before_flush")

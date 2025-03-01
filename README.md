@@ -11,6 +11,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - Session management with context managers
 - Type hints for better IDE support
 - Automatic `created_at` and `updated_at` field management
+- **Enhanced relationship handling with eager loading and nested operations**
 
 ## Installation
 
@@ -68,6 +69,77 @@ async def main():
     success = await User.delete(1)
 ```
 
+## Working with Relationships
+
+EasyModel provides enhanced support for handling relationships between models:
+
+### Defining Models with Relationships
+
+```python
+from sqlmodel import Field, Relationship
+from typing import List, Optional
+from async_easy_model import EasyModel
+
+class Author(EasyModel, table=True):
+    name: str
+    books: List["Book"] = Relationship(back_populates="author")
+
+class Book(EasyModel, table=True):
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    author: Optional[Author] = Relationship(back_populates="books")
+```
+
+### Loading Related Objects
+
+```python
+# Fetch with all relationships eagerly loaded
+author = await Author.get_by_id(1, include_relationships=True)
+print(f"Author: {author.name}")
+print(f"Books: {[book.title for book in author.books]}")
+
+# Fetch specific relationships
+book = await Book.get_with_related(1, "author")
+print(f"Book: {book.title}")
+print(f"Author: {book.author.name}")
+
+# Load relationships after fetching
+another_book = await Book.get_by_id(2)
+await another_book.load_related("author")
+print(f"Author: {another_book.author.name}")
+```
+
+### Creating Objects with Relationships
+
+```python
+# Create related objects in a single transaction
+new_author = await Author.create_with_related(
+    data={"name": "Jane Doe"},
+    related_data={
+        "books": [
+            {"title": "Book One"},
+            {"title": "Book Two"}
+        ]
+    }
+)
+
+# Access the created relationships
+for book in new_author.books:
+    print(f"Created book: {book.title}")
+```
+
+### Converting to Dictionary with Relationships
+
+```python
+# Convert to dictionary including relationships
+author_dict = author.to_dict(include_relationships=True)
+print(f"Author: {author_dict['name']}")
+print(f"Books: {[book['title'] for book in author_dict['books']]}")
+
+# Control the depth of nested relationships
+deep_dict = author.to_dict(include_relationships=True, max_depth=2)
+```
+
 ## Configuration
 
 You can configure the database connection in two ways:
@@ -109,6 +181,12 @@ from async_easy_model import db_config
 
 db_config.configure_sqlite("database.db")
 ```
+
+## Examples
+
+Check out the `examples` directory for more detailed examples:
+
+- `examples/relationship_example.py`: Demonstrates the enhanced relationship handling features
 
 ## Contributing
 

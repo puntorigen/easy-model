@@ -14,6 +14,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - **Enhanced relationship handling with eager loading and nested operations**
 - **Convenient query methods for retrieving records (all, first, limit)**
 - **Flexible ordering of query results with support for relationship fields**
+- **Simplified Field and Relationship definition syntax**
 
 ## Installation
 
@@ -23,9 +24,10 @@ pip install async-easy-model
 
 ## Quick Start
 
+This section demonstrates the basic usage of EasyModel including database configuration, model definition, and fundamental CRUD operations.
+
 ```python
-from async_easy_model import EasyModel, init_db, db_config
-from sqlmodel import Field
+from async_easy_model import EasyModel, init_db, db_config, Field
 from typing import Optional
 from datetime import datetime
 
@@ -73,14 +75,38 @@ async def main():
 
 ## Working with Relationships
 
-EasyModel provides enhanced support for handling relationships between models:
+EasyModel provides enhanced support for handling relationships between models. With the new `Relation` helper class, defining and working with relationships becomes more intuitive and type-safe.
 
 ### Defining Models with Relationships
 
+You can define relationships between models using either the new `Relation` helper class or the traditional SQLModel `Relationship` approach.
+
 ```python
-from sqlmodel import Field, Relationship
 from typing import List, Optional
-from async_easy_model import EasyModel
+from async_easy_model import EasyModel, Field, Relation
+
+class Author(EasyModel, table=True):
+    name: str
+    # Using Relation.many for a clear one-to-many relationship
+    books: List["Book"] = Relation.many("author")
+
+class Book(EasyModel, table=True):
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    # Using Relation.one for a clear many-to-one relationship
+    author: Optional["Author"] = Relation.one("books")
+```
+
+The above example uses the new `Relation` class, which provides a more readable and intuitive way to define relationships. The `Relation` class offers:
+
+- `Relation.one()` - For defining a many-to-one relationship
+- `Relation.many()` - For defining a one-to-many relationship
+
+You can also use the traditional SQLModel `Relationship` approach, which is now exposed directly in the async_easy_model package:
+
+```python
+from async_easy_model import EasyModel, Field, Relationship
+from typing import List, Optional
 
 class Author(EasyModel, table=True):
     name: str
@@ -89,10 +115,12 @@ class Author(EasyModel, table=True):
 class Book(EasyModel, table=True):
     title: str
     author_id: Optional[int] = Field(default=None, foreign_key="author.id")
-    author: Optional[Author] = Relationship(back_populates="books")
+    author: Optional["Author"] = Relationship(back_populates="books")
 ```
 
 ### Loading Related Objects
+
+EasyModel offers multiple ways to load related objects, allowing you to choose the most suitable approach for your specific use case.
 
 ```python
 # Fetch with all relationships eagerly loaded
@@ -113,6 +141,8 @@ print(f"Author: {another_book.author.name}")
 
 ### Creating Objects with Relationships
 
+When creating objects with relationships, EasyModel allows you to create related objects in a single transaction using the `create_with_related` method.
+
 ```python
 # Create related objects in a single transaction
 new_author = await Author.create_with_related(
@@ -132,21 +162,31 @@ for book in new_author.books:
 
 ### Converting to Dictionary with Relationships
 
+The `to_dict()` method allows you to convert a model instance to a dictionary, including its relationships. This is particularly useful when you need to serialize your models for an API response.
+
 ```python
+# First ensure you have loaded the relationships
+author = await Author.get_with_related(1, "books")
+
 # Convert to dictionary including relationships
 author_dict = author.to_dict(include_relationships=True)
 print(f"Author: {author_dict['name']}")
-print(f"Books: {[book['title'] for book in author_dict['books']]}")
+if 'books' in author_dict and author_dict['books']:
+    print(f"Books: {[book['title'] for book in author_dict['books']]}")
 
-# Control the depth of nested relationships
+# Control the depth of nested relationships (default is 1)
 deep_dict = author.to_dict(include_relationships=True, max_depth=2)
 ```
 
+> **Note:** Always ensure that relationships are properly loaded before calling `to_dict()` with `include_relationships=True`. Use either `get_with_related()` or `get_by_id()` with `include_relationships=True` to ensure all relationship data is available.
+
 ## Querying Records
 
-EasyModel provides convenient methods for retrieving records:
+EasyModel provides powerful and flexible query methods that make it easy to retrieve and filter records from your database. The following sections demonstrate the various query methods available.
 
 ### Retrieving All Records
+
+The `all()` method allows you to retrieve all records of a model, with options for including relationships and ordering.
 
 ```python
 # Get all users
@@ -168,6 +208,8 @@ complex_order = await User.all(order_by=["last_name", "first_name"])
 
 ### Getting the First Record
 
+The `first()` method allows you to retrieve the first record that matches your criteria, with options for ordering and including relationships.
+
 ```python
 # Get the first user
 first_user = await User.first()
@@ -183,6 +225,8 @@ oldest_user = await User.first(order_by="created_at")
 
 ### Limiting Results
 
+The `limit()` method allows you to retrieve a limited number of records, with options for ordering and including relationships.
+
 ```python
 # Get the first 10 users
 recent_users = await User.limit(10)
@@ -196,6 +240,8 @@ newest_users = await User.limit(5, order_by="-created_at")
 ```
 
 ### Filtering with Ordering
+
+The `get_by_attribute()` method allows you to filter records by attribute values, with options for ordering and including relationships.
 
 ```python
 # Get all active users ordered by username
@@ -214,6 +260,8 @@ latest_admin = await User.get_by_attribute(
 
 ### Ordering by Relationship Fields
 
+EasyModel supports ordering by relationship fields, allowing you to sort records based on attributes of related models.
+
 ```python
 # Get all books ordered by author name
 books_by_author = await Book.all(order_by="author.name")
@@ -224,9 +272,11 @@ users_by_post = await User.all(order_by="-posts.created_at")
 
 ## Configuration
 
-You can configure the database connection in two ways:
+EasyModel supports multiple ways to configure your database connection, making it easy to adapt to different environments and requirements.
 
 ### 1. Using Environment Variables
+
+Environment variables provide a secure and flexible way to configure your database connection, especially for production deployments.
 
 For PostgreSQL:
 ```bash
@@ -243,6 +293,8 @@ SQLITE_FILE=database.db
 ```
 
 ### 2. Using Configuration Methods
+
+Configuration methods provide a programmatic way to set up your database connection, which is often more convenient during development.
 
 For PostgreSQL:
 ```python
@@ -266,7 +318,7 @@ db_config.configure_sqlite("database.db")
 
 ## Examples
 
-Check out the `examples` directory for more detailed examples:
+For more detailed examples and practical applications, check out the `examples` directory in the repository:
 
 - `examples/relationship_example.py`: Demonstrates the enhanced relationship handling features
 - `examples/diario_example.py`: Shows how to use relationship features with diary entries

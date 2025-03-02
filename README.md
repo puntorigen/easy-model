@@ -15,6 +15,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - **Convenient query methods for retrieving records (all, first, limit)**
 - **Flexible ordering of query results with support for relationship fields**
 - **Simplified Field and Relationship definition syntax**
+- **Automatic relationship detection**
 
 ## Installation
 
@@ -180,6 +181,91 @@ deep_dict = author.to_dict(include_relationships=True, max_depth=2)
 
 > **Note:** Always ensure that relationships are properly loaded before calling `to_dict()` with `include_relationships=True`. Use either `get_with_related()` or `get_by_id()` with `include_relationships=True` to ensure all relationship data is available.
 
+## Automatic Relationship Detection
+
+Async EasyModel now supports automatic relationship detection based on foreign key fields. This makes it easier to work with related models without having to explicitly define relationships.
+
+### How to enable automatic relationship detection
+
+```python
+from async_easy_model import enable_auto_relationships, EasyModel, init_db, Field
+from typing import Optional
+
+# Enable automatic relationship detection before defining your models
+enable_auto_relationships()
+
+# Define your models with foreign key fields but without explicit relationships
+class Author(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    # No relationship definition needed for books!
+
+class Book(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    # No relationship definition needed for author!
+
+# Initialize database
+await init_db()
+
+# Now you can use relationships just like they were explicitly defined
+author = await Author.get_by_id(1, include_relationships=True)
+print(f"Author: {author.name}")
+print(f"Books: {[book.title for book in author.books]}")
+
+book = await Book.get_by_id(1, include_relationships=True)
+print(f"Book: {book.title}")
+print(f"Author: {book.author.name}")
+```
+
+### Compatibility with SQLModel
+
+If you encounter issues with automatic relationship detection due to conflicts with SQLModel's metaclass, you can:
+
+1. Use the explicit relationship definitions with SQLModel's `Relationship`
+2. Call `enable_auto_relationships(patch_metaclass=False)` and then set up relationships after model definition
+
+```python
+from async_easy_model import enable_auto_relationships, EasyModel, Field, Relationship
+from typing import List, Optional
+
+# Enable without patching SQLModel's metaclass
+enable_auto_relationships(patch_metaclass=False)
+
+# Define models with explicit relationships
+class Author(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    
+    # Explicitly define relationship
+    books: List["Book"] = Relationship(back_populates="author")
+
+class Book(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    
+    # Explicitly define relationship
+    author: Optional[Author] = Relationship(back_populates="books")
+```
+
+### How Automatic Relationship Detection Works
+
+The automatic relationship detection feature works by:
+
+1. Scanning model definitions for foreign key fields
+2. Identifying the target model from the foreign key reference
+3. Setting up bidirectional relationships between models
+4. Registering relationships with SQLModel's metadata
+
+This allows you to simply define the foreign key fields and let the library handle the relationship setup. The naming convention used for automatic relationships is:
+
+- For to-one relationships: The name is derived from the foreign key field by removing the "_id" suffix (e.g., "author_id" → "author")
+- For to-many relationships: The pluralized name of the source model (e.g., "book" → "books")
+
+This follows the common convention in ORMs and makes the code more intuitive and self-documenting.
+
 ## Querying Records
 
 EasyModel provides powerful and flexible query methods that make it easy to retrieve and filter records from your database. The following sections demonstrate the various query methods available.
@@ -323,6 +409,12 @@ For more detailed examples and practical applications, check out the `examples` 
 - `examples/relationship_example.py`: Demonstrates the enhanced relationship handling features
 - `examples/diario_example.py`: Shows how to use relationship features with diary entries
 - `examples/query_methods_example.py`: Shows how to use the query methods with ordering
+- `examples/minimal_working_example.py`: Basic example of model definition and CRUD operations
+- `examples/simple_auto_detection.py`: Demonstrates automatic relationship detection with SQLite
+- `examples/simple_auto_relationship.py`: Shows how to use auto-relationships with explicit definitions
+- `examples/comprehensive_auto_rel_example.py`: Comprehensive example with multiple models and relationships
+
+For complete documentation of all features, see the [DOCS.md](DOCS.md) file.
 
 ## Contributing
 

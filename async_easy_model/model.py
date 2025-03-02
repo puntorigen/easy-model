@@ -8,6 +8,7 @@ import os
 from datetime import datetime, timezone as tz
 import inspect
 import json
+import logging
 
 T = TypeVar("T", bound="EasyModel")
 
@@ -117,20 +118,49 @@ class EasyModel(SQLModel):
     def _get_relationship_fields(cls) -> List[str]:
         """
         Get all relationship fields defined in the model.
-        Returns a list of relationship field names.
+        
+        This method looks at the model's metadata to find relationship fields.
+        
+        Returns:
+            List[str]: A list of field names that are relationships.
         """
         relationship_fields = []
         
-        # Get the SQLModel metadata for this class
-        if not hasattr(cls, "__sqlmodel_relationships__"):
-            return []
-            
-        # Get relationship field names from SQLModel's metadata
-        for name in cls.__sqlmodel_relationships__:
-            relationship_fields.append(name)
-                
+        # For manually defined relationships
+        if hasattr(cls, "__sqlmodel_relationships__"):
+            for rel_name, rel_info in cls.__sqlmodel_relationships__.items():
+                # Get the actual relationship attribute, not just the metadata
+                rel_attr = getattr(cls, rel_name, None)
+                # Only include it if it's a real SQLAlchemy relationship
+                if rel_attr is not None and hasattr(rel_attr, "prop") and hasattr(rel_attr.prop, "mapper"):
+                    relationship_fields.append(rel_name)
+                # For "auto" relationships we need to check differently
+                elif rel_attr is not None and isinstance(rel_attr, Relationship):
+                    relationship_fields.append(rel_name)
+        
         return relationship_fields
     
+    @classmethod
+    def _get_auto_relationship_fields(cls) -> List[str]:
+        """
+        Get all automatically detected relationship fields from class attributes.
+        This is needed because auto-relationships may not be in __sqlmodel_relationships__ 
+        until they are properly registered.
+        """
+        # First check normal relationships
+        relationship_fields = cls._get_relationship_fields()
+        
+        # Then check for any relationship attributes created by our auto-relationship system
+        for attr_name in dir(cls):
+            if attr_name.startswith('__') or attr_name in relationship_fields:
+                continue
+                
+            attr_value = getattr(cls, attr_name)
+            if hasattr(attr_value, 'back_populates'):
+                relationship_fields.append(attr_name)
+                
+        return relationship_fields
+
     @classmethod
     def _apply_order_by(cls, statement, order_by: Optional[Union[str, List[str]]] = None):
         """
@@ -199,7 +229,8 @@ class EasyModel(SQLModel):
             statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
-                for rel_name in cls._get_relationship_fields():
+                # Get all relationship attributes, including auto-detected ones
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                     
             result = await session.execute(statement)
@@ -229,7 +260,8 @@ class EasyModel(SQLModel):
             statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
-                for rel_name in cls._get_relationship_fields():
+                # Get all relationship attributes, including auto-detected ones
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                     
             result = await session.execute(statement)
@@ -255,16 +287,14 @@ class EasyModel(SQLModel):
             A list of model instances up to the specified count
         """
         async with cls.get_session() as session:
-            statement = select(cls)
+            statement = select(cls).limit(count)
             
             # Apply ordering
             statement = cls._apply_order_by(statement, order_by)
             
-            # Apply limit
-            statement = statement.limit(count)
-            
             if include_relationships:
-                for rel_name in cls._get_relationship_fields():
+                # Get all relationship attributes, including auto-detected ones
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                     
             result = await session.execute(statement)
@@ -284,9 +314,9 @@ class EasyModel(SQLModel):
         """
         async with cls.get_session() as session:
             if include_relationships:
-                # Get all relationship attributes
+                # Get all relationship attributes, including auto-detected ones
                 statement = select(cls).where(cls.id == id)
-                for rel_name in cls._get_relationship_fields():
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                 result = await session.execute(statement)
                 return result.scalars().first()
@@ -321,7 +351,8 @@ class EasyModel(SQLModel):
             statement = cls._apply_order_by(statement, order_by)
             
             if include_relationships:
-                for rel_name in cls._get_relationship_fields():
+                # Get all relationship attributes, including auto-detected ones
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                     
             result = await session.execute(statement)
@@ -375,7 +406,7 @@ class EasyModel(SQLModel):
             if include_relationships:
                 # Refresh with relationships
                 statement = select(cls).where(cls.id == obj.id)
-                for rel_name in cls._get_relationship_fields():
+                for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
                 result = await session.execute(statement)
                 return result.scalars().first()
@@ -409,7 +440,7 @@ class EasyModel(SQLModel):
             await session.commit()
             
             if include_relationships:
-                return await cls.get_with_related(id, *cls._get_relationship_fields())
+                return await cls.get_with_related(id, *cls._get_auto_relationship_fields())
             else:
                 return await cls.get_by_id(id)
 
@@ -499,7 +530,7 @@ class EasyModel(SQLModel):
         
         # Add relationship fields if requested
         if include_relationships and max_depth > 0:
-            for rel_name in self.__class__._get_relationship_fields():
+            for rel_name in self.__class__._get_auto_relationship_fields():
                 rel_value = getattr(self, rel_name, None)
                 
                 if rel_value is None:
@@ -542,8 +573,27 @@ def _update_updated_at(sync_session, flush_context, instances):
 
 async def init_db():
     """
-    Initialize the database by creating all tables defined in the SQLModel metadata.
+    Initialize the database connection and create all tables.
     """
+    from . import db_config
+    
+    # Import auto_relationships functions with conditional import to avoid circular imports
+    try:
+        from .auto_relationships import _auto_relationships_enabled, process_auto_relationships
+        has_auto_relationships = True
+    except ImportError:
+        has_auto_relationships = False
+    
+    # Process auto-relationships before creating tables if enabled
+    if has_auto_relationships and _auto_relationships_enabled:
+        process_auto_relationships()
+    
+    # Create async engine and all tables
     engine = db_config.get_engine()
+    if not engine:
+        raise ValueError("Database configuration is missing. Use db_config.configure_* methods first.")
+    
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    
+    logging.info("Database initialized")

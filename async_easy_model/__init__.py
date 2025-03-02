@@ -1,10 +1,12 @@
-from .model import EasyModel, init_db, db_config
-from sqlmodel import Field, Relationship as SQLModelRelationship
-from typing import Optional, Any
+"""
+Async EasyModel: A simple, lightweight ORM for SQLModel with async support.
+"""
 
-# Re-export Field directly
-__version__ = "0.0.6"
-__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation"]
+from typing import Optional, Any
+from .model import EasyModel, init_db, db_config
+from sqlmodel import Field, Relationship as SQLModelRelationship  # Re-export Field directly
+__version__ = "0.1.10"
+__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships"]
 
 # Create a more user-friendly Relationship function
 def Relationship(
@@ -15,18 +17,16 @@ def Relationship(
     **kwargs: Any,
 ) -> Any:
     """
-    A more convenient wrapper around SQLModel's Relationship function.
-    
-    This makes it easier to define relationships in async-easy-model models.
+    Define a relationship between two models.
     
     Args:
-        back_populates: Name of the attribute in the related model that refers back to this relationship
-        link_model: For many-to-many relationships, specify the linking model
-        sa_relationship: Pass custom SQLAlchemy relationship options
-        **kwargs: Additional keyword arguments to pass to SQLAlchemy's relationship function
+        back_populates: Name of the attribute on the related model that refers back to this relationship
+        link_model: The model class that this relationship links to
+        sa_relationship: SQLAlchemy relationship object
+        **kwargs: Additional keyword arguments to pass to SQLModel's Relationship
         
     Returns:
-        A relationship object that can be used in a SQLModel class
+        A SQLModel Relationship object
     """
     return SQLModelRelationship(
         back_populates=back_populates,
@@ -35,5 +35,8 @@ def Relationship(
         **kwargs
     )
 
-# Import the enhanced relationship helpers
+# Import the relationship helpers
 from .relationships import Relation
+
+# Import the automatic relationship features
+from .auto_relationships import enable_auto_relationships, disable_auto_relationships, process_auto_relationships

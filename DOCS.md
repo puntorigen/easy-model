@@ -226,18 +226,28 @@ class Book(EasyModel, table=True):
     author_id: Optional[int] = Field(default=None, foreign_key="author.id")
     author: Optional[Author] = Relationship(back_populates="books")
 
-# Method 2: Using EasyModel's Relation helper
+# Method 2: Using EasyModel's Relation helper for more readable code
 class Category(EasyModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
+    # Using Relation.many for a more readable relationship definition
     products: List["Product"] = Relation.many("category")
 
 class Product(EasyModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     category_id: Optional[int] = Field(default=None, foreign_key="category.id")
+    # Using Relation.one for a more readable relationship definition
     category: Optional[Category] = Relation.one("products")
 ```
+
+The `Relation` class provides a more intuitive way to define relationships:
+
+- `Relation.one(back_populates)`: For the "one" side of a one-to-many relationship
+- `Relation.many(back_populates)`: For the "many" side of a one-to-many relationship
+- `Relation.many_to_many(back_populates, link_model)`: For many-to-many relationships
+
+This approach makes the relationship definitions more readable and self-documenting.
 
 ### Loading Related Objects
 
@@ -288,21 +298,23 @@ deep_dict = author.to_dict(include_relationships=True, max_depth=2)
 ### Enabling Auto-Relationships
 
 ```python
-from async_easy_model import enable_auto_relationships, EasyModel, Field
+from async_easy_model import enable_auto_relationships, EasyModel, init_db, Field
 from typing import Optional
 
-# Enable automatic relationship detection
+# Enable automatic relationship detection before defining your models
 enable_auto_relationships()
 
 # Define models with foreign keys but without explicit relationships
 class Department(EasyModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
+    # No explicit 'employees' relationship needed!
 
 class Employee(EasyModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     department_id: Optional[int] = Field(default=None, foreign_key="department.id")
+    # No explicit 'department' relationship needed!
 ```
 
 ### Using Auto-Detected Relationships
@@ -319,21 +331,52 @@ print(f"Department: {employee.department.name}")
 
 ### Compatibility with SQLModel
 
+If you encounter issues with automatic relationship detection due to conflicts with SQLModel's metaclass, you can:
+
+1. Use explicit relationship definitions with SQLModel's `Relationship` or `Relation` helpers
+2. Enable auto-relationships without patching the metaclass and set up relationships manually after model definition
+
 ```python
 from async_easy_model import enable_auto_relationships, setup_relationship_between_models
+from async_easy_model import EasyModel, Field
+from typing import Optional
 
 # Enable without patching SQLModel's metaclass
 enable_auto_relationships(patch_metaclass=False)
+
+# Define models with foreign keys but without explicit relationships
+class Department(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+
+class Employee(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    department_id: Optional[int] = Field(default=None, foreign_key="department.id")
 
 # Manually set up relationships after model definition
 setup_relationship_between_models(
     source_model=Employee,
     target_model=Department,
     foreign_key_name="department_id",
-    source_attr_name="department",
-    target_attr_name="employees"
+    source_attr_name="department",  # Employee.department
+    target_attr_name="employees"    # Department.employees
 )
 ```
+
+### How Automatic Relationship Detection Works
+
+The automatic relationship detection feature works by:
+
+1. Scanning model definitions for foreign key fields
+2. Identifying the target model from the foreign key reference
+3. Setting up bidirectional relationships between models
+4. Registering relationships with SQLModel's metadata
+
+This allows you to simply define the foreign key fields and let the library handle the relationship setup. The naming convention used for automatic relationships is:
+
+- For to-one relationships: The name is derived from the foreign key field by removing the "_id" suffix (e.g., "author_id" → "author")
+- For to-many relationships: The pluralized name of the source model (e.g., "book" → "books")
 
 ## Query Methods
 
@@ -346,8 +389,10 @@ all_users = await User.all()
 # With relationships
 all_users_with_relations = await User.all(include_relationships=True)
 
-# With ordering
+# With ordering (ascending)
 ordered_users = await User.all(order_by="username")
+
+# With ordering (descending)
 newest_users = await User.all(order_by="-created_at")
 
 # With multiple ordering fields
@@ -355,6 +400,7 @@ complex_order = await User.all(order_by=["last_name", "first_name"])
 
 # With relationship field ordering
 books_by_author = await Book.all(order_by="author.name")
+users_by_post_date = await User.all(order_by="-posts.created_at")
 ```
 
 ### first() - Getting the First Record
@@ -366,9 +412,14 @@ first_user = await User.first()
 # With relationships
 first_user_with_relations = await User.first(include_relationships=True)
 
-# With ordering
+# With ordering (get oldest user)
 oldest_user = await User.first(order_by="created_at")
+
+# With ordering (get newest user)
 newest_user = await User.first(order_by="-created_at")
+
+# With relationship field ordering
+first_book_by_author = await Book.first(order_by="author.name")
 ```
 
 ### limit() - Limiting Results
@@ -382,6 +433,12 @@ recent_users_with_relations = await User.limit(5, include_relationships=True)
 
 # With ordering
 newest_users = await User.limit(5, order_by="-created_at")
+
+# With multiple ordering fields
+complex_limit = await User.limit(5, order_by=["last_name", "first_name"])
+
+# With relationship field ordering
+top_books_by_author = await Book.limit(5, order_by="author.name")
 ```
 
 ### get_by_attribute() - Filtering Records
@@ -405,14 +462,48 @@ latest_admin = await User.get_by_attribute(
     order_by="-created_at"
 )
 
-# Multiple filter criteria
+# Multiple filter criteria with ordering
 filtered_users = await User.get_by_attribute(
     all=True,
     is_active=True,
     role="user",
     order_by="username"
 )
+
+# With relationship field ordering
+books_by_author = await Book.get_by_attribute(
+    all=True,
+    published=True,
+    order_by="author.name"
+)
 ```
+
+### Ordering Capabilities
+
+The ordering capabilities in async-easy-model are powerful and flexible:
+
+1. **Ascending Order**: By default, results are ordered in ascending order
+   ```python
+   users = await User.all(order_by="username")  # A to Z
+   ```
+
+2. **Descending Order**: Prefix the field name with a minus sign (`-`) for descending order
+   ```python
+   users = await User.all(order_by="-created_at")  # Newest first
+   ```
+
+3. **Multiple Field Ordering**: Pass a list of field names to order by multiple fields
+   ```python
+   users = await User.all(order_by=["last_name", "first_name"])  # Sort by last name, then first name
+   ```
+
+4. **Relationship Field Ordering**: Use dot notation to order by fields in related models
+   ```python
+   books = await Book.all(order_by="author.name")  # Books ordered by author name
+   posts = await Post.all(order_by="-user.created_at")  # Posts ordered by user creation date (newest first)
+   ```
+
+These ordering capabilities can be used with all query methods (`all()`, `first()`, `limit()`, and `get_by_attribute()`), making it easy to retrieve data in the desired sequence without additional sorting in application code.
 
 ## Advanced Features
 
@@ -521,6 +612,33 @@ The base model class that provides common async database operations.
 
 - `load_related(*relationships)`: Load relationships for an instance
 - `to_dict(include_relationships=False, max_depth=1)`: Convert instance to dictionary
+
+### Relation Class
+
+A helper class that provides a more intuitive way to define relationships.
+
+**Class Methods:**
+
+- `Relation.one(back_populates, **kwargs)`: Define a to-one relationship
+- `Relation.many(back_populates, **kwargs)`: Define a to-many relationship
+- `Relation.many_to_many(back_populates, link_model, **kwargs)`: Define a many-to-many relationship
+
+**Example:**
+
+```python
+class Author(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    # Using Relation.many for a more readable relationship definition
+    books: List["Book"] = Relation.many("author")
+
+class Book(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    # Using Relation.one for a more readable relationship definition
+    author: Optional[Author] = Relation.one("books")
+```
 
 ### Database Configuration
 

@@ -512,6 +512,60 @@ class EasyModel(SQLModel):
                     raise
     
     @classmethod
+    async def insert_with_related(
+        cls: Type[T], 
+        data: Dict[str, Any],
+        related_data: Dict[str, List[Dict[str, Any]]] = None
+    ) -> T:
+        """
+        Create a model instance with related objects in a single transaction.
+        
+        Args:
+            data: Dictionary of field values for the main model
+            related_data: Dictionary mapping relationship names to lists of data dictionaries
+                          for creating related objects
+                          
+        Returns:
+            The created model instance with relationships loaded
+        """
+        if related_data is None:
+            related_data = {}
+            
+        async with cls.get_session() as session:
+            # Create the main object
+            obj = cls(**data)
+            session.add(obj)
+            await session.flush()  # Flush to get the ID
+            
+            # Create related objects
+            for rel_name, items_data in related_data.items():
+                if not hasattr(cls, rel_name):
+                    continue
+                    
+                rel_attr = getattr(cls, rel_name)
+                if not hasattr(rel_attr, "property"):
+                    continue
+                    
+                # Get the related model class and the back reference attribute
+                related_model = rel_attr.property.mapper.class_
+                back_populates = getattr(rel_attr.property, "back_populates", None)
+                
+                # Create each related object
+                for item_data in items_data:
+                    # Set the back reference if it exists
+                    if back_populates:
+                        item_data[back_populates] = obj
+                        
+                    related_obj = related_model(**item_data)
+                    session.add(related_obj)
+            
+            await session.commit()
+            
+            # Refresh with relationships
+            await session.refresh(obj, attribute_names=list(related_data.keys()))
+            return obj
+
+    @classmethod
     def _get_unique_fields(cls) -> List[str]:
         """
         Get all fields with unique=True constraint
@@ -860,60 +914,6 @@ class EasyModel(SQLModel):
                 logging.error(f"Error deleting records: {e}")
                 await session.rollback()
                 raise
-
-    @classmethod
-    async def create_with_related(
-        cls: Type[T], 
-        data: Dict[str, Any],
-        related_data: Dict[str, List[Dict[str, Any]]] = None
-    ) -> T:
-        """
-        Create a model instance with related objects in a single transaction.
-        
-        Args:
-            data: Dictionary of field values for the main model
-            related_data: Dictionary mapping relationship names to lists of data dictionaries
-                          for creating related objects
-                          
-        Returns:
-            The created model instance with relationships loaded
-        """
-        if related_data is None:
-            related_data = {}
-            
-        async with cls.get_session() as session:
-            # Create the main object
-            obj = cls(**data)
-            session.add(obj)
-            await session.flush()  # Flush to get the ID
-            
-            # Create related objects
-            for rel_name, items_data in related_data.items():
-                if not hasattr(cls, rel_name):
-                    continue
-                    
-                rel_attr = getattr(cls, rel_name)
-                if not hasattr(rel_attr, "property"):
-                    continue
-                    
-                # Get the related model class and the back reference attribute
-                related_model = rel_attr.property.mapper.class_
-                back_populates = getattr(rel_attr.property, "back_populates", None)
-                
-                # Create each related object
-                for item_data in items_data:
-                    # Set the back reference if it exists
-                    if back_populates:
-                        item_data[back_populates] = obj
-                        
-                    related_obj = related_model(**item_data)
-                    session.add(related_obj)
-            
-            await session.commit()
-            
-            # Refresh with relationships
-            await session.refresh(obj, attribute_names=list(related_data.keys()))
-            return obj
 
     def to_dict(self, include_relationships: bool = True, max_depth: int = 4) -> Dict[str, Any]:
         """

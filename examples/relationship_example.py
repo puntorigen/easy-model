@@ -125,9 +125,12 @@ async def run_example():
     print(f"Author: {another_book.author.name}")
     print(f"Category: {another_book.category.name}")
     
-    # Create author with books as a demonstration of create_with_related
-    print("\nCreating an author with books in a single transaction...")
-    author_with_books = await Author.create_with_related(
+    # Demonstrate insert_with_related
+    print("\n--- Author with Books Example ---")
+    
+    # Create author with books as a demonstration of insert_with_related
+    print("\nCreating an author with books in a single operation...")
+    author_with_books = await Author.insert_with_related(
         data={
             "name": "Alice Wonder",
             "email": f"alice_{uuid.uuid4().hex[:8]}@example.com"

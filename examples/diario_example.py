@@ -96,7 +96,7 @@ async def run_example():
     else:
         print(f"Found existing diary record for {registro.fecha}")
     
-    # Create a diary entry using the create_with_related method
+    # Create a diary entry using the insert_with_related method
     print("\nCreating diary entries with the new relationship features...")
     
     # Method 1: Create entries separately
@@ -114,7 +114,7 @@ async def run_example():
     print("\nCreating a diary record with entries in a single transaction...")
     tomorrow = date(today.year, today.month, today.day + 1)
     
-    new_registro = await RegistroDiario.create_with_related(
+    new_registro = await RegistroDiario.insert_with_related(
         data={
             "fecha": tomorrow,
             "resumen_dia": "Planificación para el día siguiente."

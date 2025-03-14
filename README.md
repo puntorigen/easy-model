@@ -63,6 +63,44 @@ async def main():
 
 ## CRUD Operations
 
+First, let's define some models that we'll use throughout the examples:
+
+```python
+from async_easy_model import EasyModel, Field
+from typing import Optional, List
+from datetime import datetime
+
+class User(EasyModel, table=True):
+    username: str = Field(unique=True)
+    email: str
+    is_active: bool = Field(default=True)
+    
+class Post(EasyModel, table=True):
+    title: str
+    content: str
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    
+class Comment(EasyModel, table=True):
+    text: str
+    post_id: Optional[int] = Field(default=None, foreign_key="post.id")
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    
+class Department(EasyModel, table=True):
+    name: str = Field(unique=True)
+    
+class Product(EasyModel, table=True):
+    name: str
+    price: float
+    sales: int = Field(default=0)
+    
+class Book(EasyModel, table=True):
+    title: str
+    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
+    
+class Author(EasyModel, table=True):
+    name: str
+```
+
 ### Create (Insert)
 
 ```python
@@ -82,7 +120,7 @@ users = await User.insert([
 post = await Post.insert({
     "title": "My First Post",
     "content": "Hello world!",
-    "author": {"username": "john_doe"}  # Will automatically link to existing user
+    "user": {"username": "john_doe"}  # Will automatically link to existing user
 })
 ```
 
@@ -115,7 +153,7 @@ latest_posts = await Post.select({}, order_by="-created_at", limit=5)
 sorted_users = await User.select({}, order_by=["last_name", "first_name"], all=True)
 
 # Select with relationship ordering
-posts_by_author = await Post.select({}, order_by="author.username", all=True)
+posts_by_author = await Post.select({}, order_by="user.username", all=True)
 ```
 
 ### Update
@@ -147,7 +185,7 @@ success = await User.delete(1)
 deleted_count = await User.delete({"is_active": False})
 
 # Delete with compound criteria
-await Post.delete({"author": {"username": "john_doe"}, "is_published": False})
+await Post.delete({"user": {"username": "john_doe"}, "is_published": False})
 ```
 
 ## Convenient Query Methods
@@ -185,25 +223,25 @@ top_products = await Product.limit(5, order_by="-sales")
 
 ## Enhanced Relationship Handling
 
-async-easy-model makes working with relationships simple and intuitive:
+Using the models defined earlier, here's how to work with relationships:
 
 ```python
 # Load all relationships automatically
 post = await Post.select({"id": 1}, include_relationships=True)
-print(post.author.username)  # Access related objects directly
+print(post.user.username)  # Access related objects directly
 
 # Load specific relationships
-post = await Post.get_with_related(1, ["author", "comments"])
+post = await Post.get_with_related(1, ["user", "comments"])
 
 # Load relationships after fetching
 post = await Post.select({"id": 1})
-await post.load_related(["author", "comments"])
+await post.load_related(["user", "comments"])
 
-# Create with related objects in a single transaction
-new_post = await Post.create_with_related({
+# Insert with related objects in a single transaction
+new_post = await Post.insert_with_related({
     "title": "My Post",
     "content": "Content here",
-    "author": {"username": "john_doe"}
+    "user": {"username": "john_doe"}
 })
 
 # Convert to dictionary with nested relationships

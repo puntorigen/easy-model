@@ -108,6 +108,9 @@ class EasyModel(SQLModel):
     created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
     updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
 
+    # Default table args with extend_existing=True to ensure all subclasses can redefine tables
+    __table_args__ = {"extend_existing": True}
+
     @classmethod
     @contextlib.asynccontextmanager
     async def get_session(cls):
@@ -567,8 +570,8 @@ class EasyModel(SQLModel):
 
 # Register an event listener to update 'updated_at' on instance modifications.
 @event.listens_for(Session, "before_flush")
-def _update_updated_at(sync_session, flush_context, instances):
-    for instance in sync_session.dirty:
+def _update_updated_at(session, flush_context, instances):
+    for instance in session.dirty:
         if isinstance(instance, EasyModel) and hasattr(instance, "updated_at"):
             instance.updated_at = datetime.now(tz.utc)
 

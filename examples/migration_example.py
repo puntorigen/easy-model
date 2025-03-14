@@ -61,7 +61,6 @@ def setup_db_config():
 class UserV1(EasyModel, table=True):
     """Basic user model with minimal fields."""
     __tablename__ = "user"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True)
@@ -71,8 +70,7 @@ class UserV1(EasyModel, table=True):
 # Stage 2: Add new fields to the User model
 class UserV2(EasyModel, table=True):
     """Enhanced user model with additional fields."""
-    __tablename__ = "user"  # Use the same table name as UserV1
-    __table_args__ = {'extend_existing': True}
+    __tablename__ = "user"
     
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True)
@@ -86,7 +84,6 @@ class UserV2(EasyModel, table=True):
 class UserV3(EasyModel, table=True):
     """User model with relationships."""
     __tablename__ = "user"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True)
@@ -102,7 +99,6 @@ class UserV3(EasyModel, table=True):
 class PostV1(EasyModel, table=True):
     """Blog post model with user relationship."""
     __tablename__ = "post"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(index=True)
@@ -118,7 +114,6 @@ class PostV1(EasyModel, table=True):
 class UserV4(EasyModel, table=True):
     """User model with modified fields and additional relationships."""
     __tablename__ = "user"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(max_length=50, index=True)  # Added max_length constraint
@@ -135,7 +130,6 @@ class UserV4(EasyModel, table=True):
 class PostV2(EasyModel, table=True):
     """Enhanced blog post model."""
     __tablename__ = "post"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str = Field(max_length=200, index=True)  # Added max_length
@@ -152,7 +146,6 @@ class PostV2(EasyModel, table=True):
 class CommentV1(EasyModel, table=True):
     """Comment model with relationships to both User and Post."""
     __tablename__ = "comment"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     content: str
@@ -169,7 +162,6 @@ class CommentV1(EasyModel, table=True):
 class TagV1(EasyModel, table=True):
     """Tag model for categorizing posts."""
     __tablename__ = "tag"
-    __table_args__ = {'extend_existing': True}
     
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(unique=True)

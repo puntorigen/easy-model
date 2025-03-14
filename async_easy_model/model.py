@@ -5,6 +5,7 @@ from sqlalchemy import update as sqlalchemy_update, event, desc, asc
 from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple
 import contextlib
 import os
+import sys
 from datetime import datetime, timezone as tz
 import inspect
 import json
@@ -571,9 +572,17 @@ def _update_updated_at(sync_session, flush_context, instances):
         if isinstance(instance, EasyModel) and hasattr(instance, "updated_at"):
             instance.updated_at = datetime.now(tz.utc)
 
-async def init_db():
+async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = None):
     """
     Initialize the database connection and create all tables.
+    
+    Args:
+        migrate: Whether to run migrations (default: True)
+        model_classes: Optional list of model classes to create/migrate
+                      If None, will autodiscover all EasyModel subclasses
+    
+    Returns:
+        Dictionary of migration results if migrations were applied
     """
     from . import db_config
     
@@ -586,7 +595,7 @@ async def init_db():
     
     # Import migration system
     try:
-        from .migrations import check_and_migrate_models
+        from .migrations import check_and_migrate_models, _create_table_without_indexes, _create_indexes_one_by_one
         has_migrations = True
     except ImportError:
         has_migrations = False
@@ -600,18 +609,35 @@ async def init_db():
     if not engine:
         raise ValueError("Database configuration is missing. Use db_config.configure_* methods first.")
     
-    # Get all SQLModel subclasses (our models)
-    model_classes = []
-    for cls_name, cls in globals().items():
-        if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
-            model_classes.append(cls)
+    # Get all SQLModel subclasses (our models) if not provided
+    if model_classes is None:
+        model_classes = []
+        # Get all model classes by inspecting the modules
+        for module_name, module in sys.modules.items():
+            if hasattr(module, "__dict__"):
+                for cls_name, cls in module.__dict__.items():
+                    if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
+                        model_classes.append(cls)
     
-    # Check for migrations first if the feature is available
-    if has_migrations:
-        await check_and_migrate_models(model_classes)
+    migration_results = {}
     
-    # Create tables that don't exist yet
+    # Check for migrations first if the feature is available and enabled
+    if has_migrations and migrate:
+        migration_results = await check_and_migrate_models(model_classes)
+        if migration_results:
+            logging.info(f"Applied migrations: {len(migration_results)} models affected")
+    
+    # Create tables that don't exist yet - using safe index creation
     async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+        if has_migrations:
+            # Use our safe table creation methods if migrations are available
+            for model in model_classes:
+                table = model.__table__
+                await _create_table_without_indexes(table, conn)
+                await _create_indexes_one_by_one(table, conn)
+        else:
+            # Fall back to standard create_all if migrations aren't available
+            await conn.run_sync(SQLModel.metadata.create_all)
     
     logging.info("Database initialized")
+    return migration_results

@@ -1,13 +1,13 @@
-import hashlib
 import json
 import os
 import inspect
 import logging
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Type, Optional, Any, Tuple
-from sqlalchemy import inspect as sa_inspect, Column, Table, MetaData
-from sqlalchemy.schema import CreateTable, DropTable, AddColumn, DropColumn, AlterColumn
+from sqlalchemy import inspect as sa_inspect, Column, Table, MetaData, text, create_engine
+from sqlalchemy.schema import CreateTable, DropTable
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlmodel import SQLModel, Field
 
@@ -15,6 +15,82 @@ from sqlmodel import SQLModel, Field
 MIGRATIONS_DIR = '.easy_model_migrations'
 MODEL_HASHES_FILE = 'model_hashes.json'
 MIGRATIONS_HISTORY_FILE = 'migration_history.json'
+
+def _get_sqlite_type(sqla_type):
+    """
+    Convert SQLAlchemy type to SQLite type for ALTER TABLE statements.
+    
+    Args:
+        sqla_type: SQLAlchemy type
+        
+    Returns:
+        SQLite type string
+    """
+    type_map = {
+        "INTEGER": "INTEGER",
+        "BIGINT": "INTEGER",
+        "SMALLINT": "INTEGER",
+        "VARCHAR": "TEXT",
+        "NVARCHAR": "TEXT",
+        "TEXT": "TEXT", 
+        "BOOLEAN": "BOOLEAN",
+        "FLOAT": "REAL",
+        "REAL": "REAL",
+        "NUMERIC": "NUMERIC",
+        "DECIMAL": "NUMERIC",
+        "TIMESTAMP": "TIMESTAMP",
+        "DATETIME": "DATETIME",
+        "DATE": "DATE"
+    }
+    
+    # Get type name from SQLAlchemy type
+    type_name = sqla_type.__class__.__name__.upper()
+    
+    # Try to match with SQLite type
+    for key in type_map:
+        if key in type_name:
+            return type_map[key]
+    
+    # Default to TEXT if no match found
+    return "TEXT"
+
+async def _create_table_without_indexes(table, connection):
+    """
+    Create a table without creating its indexes.
+    
+    Args:
+        table: SQLAlchemy Table object
+        connection: AsyncConnection
+    """
+    # Create a copy of the table without indexes
+    metadata = MetaData()
+    new_table = Table(
+        table.name,
+        metadata,
+        *[c.copy() for c in table.columns],
+        schema=table.schema
+    )
+    
+    # Create the table
+    await connection.run_sync(lambda sync_conn: new_table.create(sync_conn, checkfirst=True))
+
+async def _create_indexes_one_by_one(table, connection):
+    """
+    Create indexes one by one, ignoring errors if they already exist.
+    
+    Args:
+        table: SQLAlchemy Table object
+        connection: AsyncConnection
+    """
+    for index in table.indexes:
+        try:
+            await connection.run_sync(lambda sync_conn: index.create(sync_conn))
+            logging.info(f"Created index {index.name}")
+        except Exception as e:
+            if "already exists" in str(e):
+                logging.warning(f"Index {index.name} already exists, skipping")
+            else:
+                raise
 
 class MigrationManager:
     """Manages schema migrations for EasyModel classes."""
@@ -50,38 +126,74 @@ class MigrationManager:
         Returns:
             A string hash representing the model's structure
         """
-        # Get model attributes relevant to the database schema
-        model_dict = {}
+        model_dict = {
+            "name": model_class.__name__,
+            "tablename": getattr(model_class, "__tablename__", None),
+            "columns": {}
+        }
         
-        # Table name
-        table_name = model_class.__tablename__
-        model_dict["table_name"] = table_name
+        # Get table from model
+        table = model_class.__table__
         
-        # Fields
-        fields = {}
-        for name, column in model_class.__table__.columns.items():
-            field_info = {
+        # Process columns
+        for name, column in table.columns.items():
+            col_dict = {
                 "type": str(column.type),
                 "nullable": column.nullable,
-                "primary_key": column.primary_key,
                 "default": str(column.default) if column.default is not None else None,
-                "unique": column.unique,
-                "foreign_keys": [str(fk) for fk in column.foreign_keys] if column.foreign_keys else []
+                "primary_key": column.primary_key,
+                "foreign_keys": [str(fk) for fk in column.foreign_keys] if column.foreign_keys else [],
+                "unique": column.unique
             }
-            fields[name] = field_info
-            
-        model_dict["fields"] = fields
+            model_dict["columns"][name] = col_dict
+        
+        # Process indexes
+        if hasattr(table, "indexes"):
+            indexes = []
+            for idx in table.indexes:
+                idx_dict = {
+                    "name": idx.name,
+                    "columns": [col.name for col in idx.columns],
+                    "unique": idx.unique
+                }
+                indexes.append(idx_dict)
+            model_dict["indexes"] = indexes
         
         # Relationships
         if hasattr(model_class, "__sqlmodel_relationships__"):
             relationships = {}
             for rel_name, rel_info in model_class.__sqlmodel_relationships__.items():
+                # Safely extract relationship information
                 rel_dict = {
-                    "target": rel_info.argument.__name__ if hasattr(rel_info.argument, "__name__") else str(rel_info.argument),
-                    "back_populates": rel_info.back_populates,
-                    "link_model": rel_info.link_model.__name__ if rel_info.link_model else None,
-                    "sa_relationship_args": str(rel_info.sa_relationship_args)
+                    "back_populates": getattr(rel_info, "back_populates", None),
+                    "sa_relationship_args": str(getattr(rel_info, "sa_relationship_args", {}))
                 }
+                
+                # Handle target model differently based on available attributes
+                if hasattr(rel_info, "argument"):
+                    target = rel_info.argument
+                    if hasattr(target, "__name__"):
+                        rel_dict["target"] = target.__name__
+                    else:
+                        rel_dict["target"] = str(target)
+                else:
+                    # Try to extract information from other attributes
+                    if hasattr(rel_info, "_relationship_args"):
+                        args = rel_info._relationship_args
+                        if args and len(args) > 0:
+                            rel_dict["target"] = str(args[0])
+                    else:
+                        rel_dict["target"] = "unknown"
+                
+                # Handle link_model
+                if hasattr(rel_info, "link_model") and rel_info.link_model:
+                    if hasattr(rel_info.link_model, "__name__"):
+                        rel_dict["link_model"] = rel_info.link_model.__name__
+                    else:
+                        rel_dict["link_model"] = str(rel_info.link_model)
+                else:
+                    rel_dict["link_model"] = None
+                
                 relationships[rel_name] = rel_dict
                 
             model_dict["relationships"] = relationships
@@ -162,67 +274,50 @@ class MigrationManager:
     
     async def generate_migration_plan(self, model: Type[SQLModel], connection: AsyncConnection) -> List[Dict[str, Any]]:
         """
-        Generate a plan for migrating a model.
+        Generate a migration plan for a model.
         
         Args:
-            model: The model class to generate a migration plan for
-            connection: SQLAlchemy async connection to use for introspection
+            model: The model to generate migrations for
+            connection: SQLAlchemy async connection to use
             
         Returns:
             List of migration operations to perform
         """
-        # Get current database schema for the table
-        table_name = model.__tablename__
-        inspector = await connection.run_sync(lambda sync_conn: sa_inspect(sync_conn))
-        
-        if not await connection.run_sync(lambda sync_conn: inspector.has_table(table_name)):
-            # Table doesn't exist, create it
-            return [{
-                "operation": "create_table",
-                "table_name": table_name
-            }]
-            
-        # Table exists, check for column changes
-        db_columns = await connection.run_sync(lambda sync_conn: {
-            col["name"]: col for col in inspector.get_columns(table_name)
-        })
-        
-        model_columns = {name: column for name, column in model.__table__.columns.items()}
-        
         operations = []
         
-        # Find columns to add (in model but not in DB)
-        for name, column in model_columns.items():
-            if name not in db_columns:
-                operations.append({
-                    "operation": "add_column",
-                    "table_name": table_name,
-                    "column_name": name,
-                    "column_type": str(column.type),
-                    "nullable": column.nullable
-                })
-            else:
-                # Check for column modifications
-                db_col = db_columns[name]
-                # This is a simplified check - in a full implementation you'd compare more attributes
-                if str(column.type) != str(db_col["type"]):
+        # Get inspector for database introspection
+        inspector = await connection.run_sync(lambda sync_conn: sa_inspect(sync_conn))
+        
+        # Get table name from model
+        table_name = model.__tablename__
+        
+        # Check if table exists
+        table_exists = await connection.run_sync(lambda sync_conn: inspector.has_table(table_name))
+        
+        if not table_exists:
+            # If table doesn't exist, create it with all columns
+            operations.append({
+                "operation": "create_table",
+                "table_name": table_name
+            })
+        else:
+            # If table exists, check for new columns
+            existing_columns = await connection.run_sync(lambda sync_conn: inspector.get_columns(table_name))
+            existing_column_names = [col['name'] for col in existing_columns]
+            
+            # Get column objects from model's __table__
+            model_columns = model.__table__.columns
+            
+            # Add columns that don't exist yet
+            for col_name, column in model_columns.items():
+                if col_name not in existing_column_names:
                     operations.append({
-                        "operation": "alter_column",
+                        "operation": "add_column",
                         "table_name": table_name,
-                        "column_name": name,
-                        "old_type": str(db_col["type"]),
-                        "new_type": str(column.type)
+                        "column_name": col_name,
+                        "column": column
                     })
         
-        # Find columns to drop (in DB but not in model)
-        for name in db_columns:
-            if name not in model_columns:
-                operations.append({
-                    "operation": "drop_column",
-                    "table_name": table_name,
-                    "column_name": name
-                })
-                
         return operations
     
     async def apply_migration(self, model: Type[SQLModel], operations: List[Dict[str, Any]], connection: AsyncConnection) -> None:
@@ -235,63 +330,80 @@ class MigrationManager:
             connection: SQLAlchemy async connection to use for executing migrations
         """
         applied_changes = []
-        metadata = MetaData()
         
         for op in operations:
-            if op["operation"] == "create_table":
-                # Create table using model's __table__ definition
-                table_def = model.__table__
-                create_stmt = CreateTable(table_def)
-                await connection.execute(create_stmt)
-                applied_changes.append(op)
-                
-            elif op["operation"] == "add_column":
-                # Add column to existing table
-                table = Table(op["table_name"], metadata)
-                column_def = None
-                
-                # Find the column definition from the model
-                for name, column in model.__table__.columns.items():
-                    if name == op["column_name"]:
-                        column_def = column
-                        break
-                
-                if column_def:
-                    add_stmt = AddColumn(op["table_name"], column_def)
-                    await connection.execute(add_stmt)
+            try:
+                if op["operation"] == "create_table":
+                    # Create table but handle indexes separately to avoid conflicts
+                    table = model.__table__
+                    
+                    # First create the table structure without indexes
+                    await _create_table_without_indexes(table, connection)
+                    logging.info(f"Created table structure: {op['table_name']}")
+                    
+                    # Then create indexes one by one, handling "already exists" errors
+                    await _create_indexes_one_by_one(table, connection)
+                    
                     applied_changes.append(op)
                     
-            elif op["operation"] == "alter_column":
-                # Alter column type - this is simplified
-                # In real implementation, you'd create appropriate ALTER TABLE statements
-                # based on your specific database (PostgreSQL, SQLite, etc.)
-                # This is one area where Alembic has a lot of complexity
-                table = op["table_name"]
-                column = op["column_name"]
-                new_type = op["new_type"]
+                elif op["operation"] == "add_column":
+                    # Add column to existing table
+                    table_name = op["table_name"]
+                    column = op["column"]
+                    col_name = op["column_name"]
+                    
+                    # Check if column already exists
+                    inspector = await connection.run_sync(lambda sync_conn: sa_inspect(sync_conn))
+                    existing_columns = await connection.run_sync(lambda sync_conn: inspector.get_columns(table_name))
+                    existing_column_names = [col['name'] for col in existing_columns]
+                    
+                    if col_name in existing_column_names:
+                        logging.info(f"Column {col_name} already exists in table {table_name}, skipping")
+                        applied_changes.append(op)
+                        continue
+                    
+                    # Get SQLite type for the column
+                    col_type = _get_sqlite_type(column.type)
+                    
+                    # Prepare nullable constraint
+                    nullable = "" if column.nullable else "NOT NULL"
+                    
+                    # Prepare default value
+                    default = ""
+                    if column.default is not None and hasattr(column.default, 'arg'):
+                        if isinstance(column.default.arg, str):
+                            default = f"DEFAULT '{column.default.arg}'"
+                        else:
+                            default = f"DEFAULT {column.default.arg}"
+                    
+                    # Create SQLite-compatible ALTER TABLE statement
+                    alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type} {nullable} {default}"
+                    await connection.execute(text(alter_stmt.strip()))
+                    
+                    logging.info(f"Added column {col_name} to table {table_name}")
+                    applied_changes.append(op)
+            
+            except Exception as e:
+                error_msg = str(e)
+                logging.error(f"Error applying migration operation {op['operation']}: {error_msg}")
                 
-                # This is a placeholder - actual implementation depends on database type
-                alter_stmt = f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {new_type}"
-                await connection.execute(alter_stmt)
-                applied_changes.append(op)
-                
-            elif op["operation"] == "drop_column":
-                # Drop column from table
-                table = op["table_name"]
-                column = op["column_name"]
-                
-                drop_stmt = DropColumn(table, Column(column))
-                await connection.execute(drop_stmt)
-                applied_changes.append(op)
+                # Handle expected errors
+                if "already exists" in error_msg:
+                    # Skip errors for objects that already exist
+                    logging.warning(f"Ignoring 'already exists' error: {error_msg}")
+                    applied_changes.append(op)
+                else:
+                    raise
         
         # Record the migration in history
-        self._record_migration(model.__name__, applied_changes)
-        
-        # Update model hash
-        hashes = self._load_model_hashes()
-        hashes[model.__name__] = self._get_model_hash(model)
-        self._save_model_hashes(hashes)
-        
+        if applied_changes:
+            self._record_migration(model.__name__, applied_changes)
+            
+            # Update model hash
+            hashes = self._load_model_hashes()
+            hashes[model.__name__] = self._get_model_hash(model)
+            self._save_model_hashes(hashes)
+
     async def migrate_models(self, models: List[Type[SQLModel]]) -> Dict[str, List[Dict[str, Any]]]:
         """
         Check for changes and migrate all models if needed.
@@ -302,7 +414,7 @@ class MigrationManager:
         Returns:
             Dictionary mapping model names to lists of applied migration operations
         """
-        from ..model import db_config  # Import here to avoid circular imports
+        from async_easy_model.model import db_config
         
         changes = await self.detect_model_changes(models)
         results = {}
@@ -317,20 +429,27 @@ class MigrationManager:
                     # Find the model class
                     model = next((m for m in models if m.__name__ == model_name), None)
                     if model:
-                        operations = await self.generate_migration_plan(model, connection)
-                        if operations:
-                            await self.apply_migration(model, operations, connection)
-                            results[model_name] = operations
+                        try:
+                            operations = await self.generate_migration_plan(model, connection)
+                            if operations:
+                                await self.apply_migration(model, operations, connection)
+                                results[model_name] = operations
+                        except Exception as e:
+                            logging.error(f"Error migrating model {model_name}: {str(e)}")
+                            raise
         
         return results
 
 # Function to register with the EasyModel system
-async def check_and_migrate_models(models: List[Type[SQLModel]]) -> None:
+async def check_and_migrate_models(models: List[Type[SQLModel]]) -> Dict[str, List[Dict[str, Any]]]:
     """
     Check for model changes and apply migrations if needed.
     
     Args:
         models: List of SQLModel classes to check and migrate
+        
+    Returns:
+        Dictionary of applied migrations
     """
     migration_manager = MigrationManager()
-    await migration_manager.migrate_models(models)
+    return await migration_manager.migrate_models(models)

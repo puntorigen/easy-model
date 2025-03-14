@@ -57,78 +57,167 @@ def setup_db_config():
     """Configure the database connection for the example."""
     db_config.configure_sqlite(DB_FILE)  # Use configure_sqlite method
 
-# Custom function to apply schema migrations
-async def apply_migrations(model_class):
-    """Apply schema migrations for the given model"""
-    # Get the engine
-    engine = db_config.get_engine()
-    
-    # Create the table if it doesn't exist yet
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
-    
-    # Manually apply migrations based on the model's __table__ definition
-    table_name = model_class.__tablename__
-    
-    # Get current columns in the database
-    async with engine.connect() as conn:
-        # Get table info using run_sync to handle the SQLite specific command
-        existing_columns = set()
-        
-        # Use a raw SQL approach for SQLite
-        result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
-        rows = result.fetchall()  # This is not awaitable
-        existing_columns = {row[1] for row in rows}
-        
-        # Check model attributes to find new columns
-        for name, column in model_class.__table__.columns.items():
-            if name not in existing_columns and name != 'id':
-                # Generate ALTER TABLE statement
-                col_type = _get_sqlite_type(column.type)
-                nullable = "" if column.nullable else "NOT NULL"
-                default = f"DEFAULT {column.default.arg}" if column.default is not None and hasattr(column.default, 'arg') else ""
-                
-                alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN {name} {col_type} {nullable} {default}"
-                print(f"Adding column: {name} to table {table_name}")
-                
-                # Execute the ALTER TABLE statement
-                await conn.execute(text(alter_stmt))
-        
-        await conn.commit()
-
-# Helper function to convert SQLAlchemy types to SQLite types
-def _get_sqlite_type(sa_type):
-    """Convert SQLAlchemy type to SQLite type string"""
-    type_map = {
-        'String': 'TEXT',
-        'Integer': 'INTEGER',
-        'Boolean': 'BOOLEAN',
-        'DateTime': 'TIMESTAMP',
-        'Float': 'REAL',
-        'Text': 'TEXT'
-    }
-    
-    type_name = sa_type.__class__.__name__
-    return type_map.get(type_name, 'TEXT')
-
 # Stage 1: Initial setup with a simple User model
+class UserV1(EasyModel, table=True):
+    """Basic user model with minimal fields."""
+    __tablename__ = "user"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    email: str = Field(unique=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+# Stage 2: Add new fields to the User model
+class UserV2(EasyModel, table=True):
+    """Enhanced user model with additional fields."""
+    __tablename__ = "user"  # Use the same table name as UserV1
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    email: str = Field(unique=True)
+    full_name: Optional[str] = Field(default=None)  # New field
+    is_active: bool = Field(default=True)  # New field
+    last_login: Optional[datetime] = Field(default=None)  # New field
+    created_at: datetime = Field(default_factory=datetime.now)
+
+# Stage 3: Add a new model with relationship to User
+class UserV3(EasyModel, table=True):
+    """User model with relationships."""
+    __tablename__ = "user"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True)
+    email: str = Field(unique=True)
+    full_name: Optional[str] = Field(default=None)
+    is_active: bool = Field(default=True)
+    last_login: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationship field will be populated automatically
+    posts: List["PostV1"] = Relationship(back_populates="author")
+
+class PostV1(EasyModel, table=True):
+    """Blog post model with user relationship."""
+    __tablename__ = "post"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    content: str
+    published: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationship to User model
+    author_id: int = Field(foreign_key="user.id")
+    author: UserV3 = Relationship(back_populates="posts")
+
+# Stage 4: Modify field types and add another related model
+class UserV4(EasyModel, table=True):
+    """User model with modified fields and additional relationships."""
+    __tablename__ = "user"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(max_length=50, index=True)  # Added max_length constraint
+    email: str = Field(unique=True)
+    full_name: Optional[str] = Field(default=None, max_length=100)  # Added max_length
+    is_active: bool = Field(default=True)
+    last_login: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationships
+    posts: List["PostV2"] = Relationship(back_populates="author")
+    comments: List["CommentV1"] = Relationship(back_populates="author")
+
+class PostV2(EasyModel, table=True):
+    """Enhanced blog post model."""
+    __tablename__ = "post"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=200, index=True)  # Added max_length
+    content: str
+    summary: Optional[str] = Field(default=None, max_length=500)  # New field
+    published: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationships
+    author_id: int = Field(foreign_key="user.id")
+    author: UserV4 = Relationship(back_populates="posts")
+    comments: List["CommentV1"] = Relationship(back_populates="post")
+
+class CommentV1(EasyModel, table=True):
+    """Comment model with relationships to both User and Post."""
+    __tablename__ = "comment"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content: str
+    created_at: datetime = Field(default_factory=datetime.now)
+    
+    # Relationships
+    author_id: int = Field(foreign_key="user.id")
+    author: UserV4 = Relationship(back_populates="comments")
+    
+    post_id: int = Field(foreign_key="post.id")
+    post: PostV2 = Relationship(back_populates="comments")
+
+# Stage 5: Using MigrationManager API directly
+class TagV1(EasyModel, table=True):
+    """Tag model for categorizing posts."""
+    __tablename__ = "tag"
+    __table_args__ = {'extend_existing': True}
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(unique=True)
+    description: Optional[str] = Field(default=None)
+
+# Helper function to display migration tracking information
+async def show_migration_info():
+    """Display the current migration tracking information."""
+    model_hashes_path = Path(MIGRATIONS_DIR) / "model_hashes.json"
+    migration_history_path = Path(MIGRATIONS_DIR) / "migration_history.json"
+    
+    print("\nModel Hashes:")
+    if model_hashes_path.exists():
+        with open(model_hashes_path, 'r') as f:
+            hashes = json.load(f)
+            for model_name, hash_value in hashes.items():
+                print(f"  {model_name}: {hash_value[:8]}...")
+    else:
+        print("  No model hashes file found.")
+    
+    print("\nMigration History:")
+    if migration_history_path.exists():
+        with open(migration_history_path, 'r') as f:
+            history = json.load(f)
+            # Check if history is a dictionary with 'migrations' key
+            if isinstance(history, dict) and 'migrations' in history:
+                migrations = history['migrations']
+                if not migrations:
+                    print("  No migrations recorded yet.")
+                for entry in migrations:
+                    if isinstance(entry, dict) and 'timestamp' in entry:
+                        dt = datetime.fromisoformat(entry['timestamp'])
+                        formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        operations = entry.get('operations', [])
+                        ops_str = ', '.join(op.get('operation', 'unknown') for op in operations)
+                        print(f"  {formatted_time} - {entry.get('model', 'unknown')}: {ops_str}")
+            else:
+                print("  Migration history file has an unexpected format.")
+    else:
+        print("  No migration history file found.")
+
+# Stage 1: Initial setup
 async def stage1():
     """Stage 1: Create initial database with basic User model."""
     print("\n========== STAGE 1: INITIAL SETUP ==========\n")
     
-    # Define the initial User model
-    class UserV1(EasyModel, table=True):
-        """Basic user model with minimal fields."""
-        __tablename__ = "user"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        username: str = Field(index=True)
-        email: str = Field(unique=True)
-        created_at: datetime = Field(default_factory=datetime.now)
-    
     # Initialize the database with our model
-    await init_db()
+    await init_db(model_classes=[UserV1])
     print("Initial database created with User model.")
     
     # Create a sample user
@@ -146,30 +235,13 @@ async def stage1():
     # Display migration tracking information
     await show_migration_info()
 
-# Stage 2: Add new fields to the User model
+# Stage 2: Add new fields
 async def stage2():
     """Stage 2: Add new fields to the User model."""
     print("\n========== STAGE 2: ADDING NEW FIELDS ==========\n")
     
-    # Clear the SQLModel registry to avoid conflicts
-    SQLModel.metadata = MetaData()
-    
-    # Define the User model with additional fields
-    class UserV2(EasyModel, table=True):
-        """Enhanced user model with additional fields."""
-        __tablename__ = "user"  # Use the same table name as UserV1
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        username: str = Field(index=True)
-        email: str = Field(unique=True)
-        full_name: Optional[str] = Field(default=None)  # New field
-        is_active: bool = Field(default=True)  # New field
-        last_login: Optional[datetime] = Field(default=None)  # New field
-        created_at: datetime = Field(default_factory=datetime.now)
-    
-    # Apply migrations to add new fields
-    await apply_migrations(UserV2)
+    # Initialize the database with our updated model
+    await init_db(model_classes=[UserV2])
     print("Applied migrations to add new fields to User model.")
     
     # Retrieve existing users
@@ -198,53 +270,16 @@ async def stage2():
     # Display migration tracking information
     await show_migration_info()
 
-# Stage 3: Add a new model with relationship to User
+# Stage 3: Add new models with relationships
 async def stage3():
     """Stage 3: Add a new Post model with relationship to User."""
     print("\n========== STAGE 3: ADDING RELATED MODELS ==========\n")
     
-    # Clear the SQLModel registry to avoid conflicts
-    SQLModel.metadata = MetaData()
-    
-    # Define the User model again (same as stage 2)
-    class UserV3(EasyModel, table=True):
-        """User model with relationships."""
-        __tablename__ = "user"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        username: str = Field(index=True)
-        email: str = Field(unique=True)
-        full_name: Optional[str] = Field(default=None)
-        is_active: bool = Field(default=True)
-        last_login: Optional[datetime] = Field(default=None)
-        created_at: datetime = Field(default_factory=datetime.now)
-        
-        # Relationship field will be populated automatically
-        posts: List["PostV1"] = Relationship(back_populates="author")
-    
-    # Define a new Post model with relationship to User
-    class PostV1(EasyModel, table=True):
-        """Blog post model with user relationship."""
-        __tablename__ = "post"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        title: str = Field(index=True)
-        content: str
-        published: bool = Field(default=False)
-        created_at: datetime = Field(default_factory=datetime.now)
-        
-        # Relationship to User model
-        author_id: int = Field(foreign_key="user.id")
-        author: UserV3 = Relationship(back_populates="posts")
-    
-    # Apply migrations for both models
-    await apply_migrations(UserV3)
-    await apply_migrations(PostV1)
+    # Initialize the database with our updated models
+    await init_db(model_classes=[UserV3, PostV1])
     print("Applied migrations to create Post model and relationships.")
     
-    # Retrieve users
+    # Retrieve existing users
     users = await UserV3.all()
     
     # Create posts for the first user
@@ -252,14 +287,12 @@ async def stage3():
     post1 = await PostV1.insert({
         "title": "First Post",
         "content": "This is my first blog post!",
-        "published": True,
         "author_id": user.id
     })
     
     post2 = await PostV1.insert({
-        "title": "Draft Post",
-        "content": "This is an unpublished draft.",
-        "published": False,
+        "title": "Second Post",
+        "content": "This is my second blog post!",
         "author_id": user.id
     })
     
@@ -273,78 +306,20 @@ async def stage3():
     # Display migration tracking information
     await show_migration_info()
 
-# Stage 4: Modify field types and add another related model
+# Stage 4: Modify field types and add more relationships
 async def stage4():
     """Stage 4: Modify field types and add Comment model."""
     print("\n========== STAGE 4: MODIFYING FIELD TYPES AND MORE RELATIONSHIPS ==========\n")
     
-    # Clear the SQLModel registry to avoid conflicts
-    SQLModel.metadata = MetaData()
-    
-    # User model with modified field
-    class UserV4(EasyModel, table=True):
-        """User model with modified fields and additional relationships."""
-        __tablename__ = "user"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        username: str = Field(max_length=50, index=True)  # Added max_length constraint
-        email: str = Field(unique=True)
-        full_name: Optional[str] = Field(default=None, max_length=100)  # Added max_length
-        is_active: bool = Field(default=True)
-        last_login: Optional[datetime] = Field(default=None)
-        created_at: datetime = Field(default_factory=datetime.now)
-        
-        # Relationships
-        posts: List["PostV2"] = Relationship(back_populates="author")
-        comments: List["CommentV1"] = Relationship(back_populates="author")
-    
-    # Post model with modified fields
-    class PostV2(EasyModel, table=True):
-        """Enhanced blog post model."""
-        __tablename__ = "post"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        title: str = Field(max_length=200, index=True)  # Added max_length
-        content: str
-        summary: Optional[str] = Field(default=None, max_length=500)  # New field
-        published: bool = Field(default=False)
-        created_at: datetime = Field(default_factory=datetime.now)
-        
-        # Relationships
-        author_id: int = Field(foreign_key="user.id")
-        author: UserV4 = Relationship(back_populates="posts")
-        comments: List["CommentV1"] = Relationship(back_populates="post")
-    
-    # New Comment model
-    class CommentV1(EasyModel, table=True):
-        """Comment model with relationships to both User and Post."""
-        __tablename__ = "comment"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        content: str
-        created_at: datetime = Field(default_factory=datetime.now)
-        
-        # Relationships
-        author_id: int = Field(foreign_key="user.id")
-        author: UserV4 = Relationship(back_populates="comments")
-        
-        post_id: int = Field(foreign_key="post.id")
-        post: PostV2 = Relationship(back_populates="comments")
-    
-    # Apply migrations for all models
-    await apply_migrations(UserV4)
-    await apply_migrations(PostV2)
-    await apply_migrations(CommentV1)
+    # Initialize the database with our updated models
+    await init_db(model_classes=[UserV4, PostV2, CommentV1])
     print("Applied migrations to modify field types and create Comment model.")
     
-    # Retrieve a post
+    # Retrieve existing posts
     posts = await PostV2.all()
-    post = posts[0]
     
-    # Add summary to the post
+    # Update the existing post to add a summary
+    post = posts[0]
     updated_post = await PostV2.update(post.id, {
         "summary": "A short summary of the first blog post."
     })
@@ -383,19 +358,6 @@ async def stage5():
     """Stage 5: Using MigrationManager API directly."""
     print("\n========== STAGE 5: USING MIGRATION MANAGER API ==========\n")
     
-    # Clear the SQLModel registry to avoid conflicts
-    SQLModel.metadata = MetaData()
-    
-    # Define a new Tag model
-    class TagV1(EasyModel, table=True):
-        """Tag model for categorizing posts."""
-        __tablename__ = "tag"
-        __table_args__ = {'extend_existing': True}
-        
-        id: Optional[int] = Field(default=None, primary_key=True)
-        name: str = Field(unique=True)
-        description: Optional[str] = Field(default=None)
-    
     # Create a MigrationManager instance for demonstration purposes
     migration_manager = MigrationManager(base_dir=os.getcwd())
     
@@ -415,8 +377,8 @@ async def stage5():
         else:
             print(f"    - {changes}")
     
-    # Apply migrations and initialize the tag model
-    await apply_migrations(TagV1)
+    # Apply migrations for the Tag model
+    await init_db(model_classes=[TagV1])
     print("\nApplied migrations for Tag model")
     
     # Create some tags
@@ -434,42 +396,6 @@ async def stage5():
     
     # Display final migration information
     await show_migration_info()
-
-# Helper function to display migration tracking information
-async def show_migration_info():
-    """Display the current migration tracking information."""
-    model_hashes_path = Path(MIGRATIONS_DIR) / "model_hashes.json"
-    migration_history_path = Path(MIGRATIONS_DIR) / "migration_history.json"
-    
-    print("\nModel Hashes:")
-    if model_hashes_path.exists():
-        with open(model_hashes_path, 'r') as f:
-            hashes = json.load(f)
-            for model_name, hash_value in hashes.items():
-                print(f"  {model_name}: {hash_value[:8]}...")
-    else:
-        print("  No model hashes file found.")
-    
-    print("\nMigration History:")
-    if migration_history_path.exists():
-        with open(migration_history_path, 'r') as f:
-            history = json.load(f)
-            # Check if history is a dictionary with 'migrations' key
-            if isinstance(history, dict) and 'migrations' in history:
-                migrations = history['migrations']
-                if not migrations:
-                    print("  No migrations recorded yet.")
-                for entry in migrations:
-                    if isinstance(entry, dict) and 'timestamp' in entry:
-                        dt = datetime.fromisoformat(entry['timestamp'])
-                        formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        operations = entry.get('operations', [])
-                        ops_str = ', '.join(op.get('operation', 'unknown') for op in operations)
-                        print(f"  {formatted_time} - {entry.get('model', 'unknown')}: {ops_str}")
-            else:
-                print("  Migration history file has an unexpected format.")
-    else:
-        print("  No migration history file found.")
 
 # Main function to run the example
 async def main():

@@ -6,7 +6,7 @@ from typing import Optional, Any
 from .model import EasyModel, init_db, db_config
 from sqlmodel import Field, Relationship as SQLModelRelationship
 
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 __all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships", "MigrationManager", "check_and_migrate_models"]
 
 # Create a more user-friendly Relationship function

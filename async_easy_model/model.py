@@ -212,7 +212,7 @@ class EasyModel(SQLModel):
     @classmethod
     async def all(
         cls: Type[T], 
-        include_relationships: bool = False,
+        include_relationships: bool = True,
         order_by: Optional[Union[str, List[str]]] = None
     ) -> List[T]:
         """
@@ -243,7 +243,7 @@ class EasyModel(SQLModel):
     @classmethod
     async def first(
         cls: Type[T], 
-        include_relationships: bool = False,
+        include_relationships: bool = True,
         order_by: Optional[Union[str, List[str]]] = None
     ) -> Optional[T]:
         """
@@ -275,7 +275,7 @@ class EasyModel(SQLModel):
     async def limit(
         cls: Type[T], 
         count: int, 
-        include_relationships: bool = False,
+        include_relationships: bool = True,
         order_by: Optional[Union[str, List[str]]] = None
     ) -> List[T]:
         """
@@ -305,7 +305,7 @@ class EasyModel(SQLModel):
             return result.scalars().all()
 
     @classmethod
-    async def get_by_id(cls: Type[T], id: int, include_relationships: bool = False) -> Optional[T]:
+    async def get_by_id(cls: Type[T], id: int, include_relationships: bool = True) -> Optional[T]:
         """
         Retrieve a record by its primary key.
         
@@ -331,7 +331,7 @@ class EasyModel(SQLModel):
     async def get_by_attribute(
         cls: Type[T], 
         all: bool = False, 
-        include_relationships: bool = False,
+        include_relationships: bool = True,
         order_by: Optional[Union[str, List[str]]] = None,
         **kwargs
     ) -> Union[Optional[T], List[T]]:
@@ -391,7 +391,7 @@ class EasyModel(SQLModel):
             return result.scalars().first()
 
     @classmethod
-    async def insert(cls: Type[T], data: Dict[str, Any], include_relationships: bool = False) -> T:
+    async def insert(cls: Type[T], data: Dict[str, Any], include_relationships: bool = True) -> T:
         """
         Insert a new record.
         
@@ -423,7 +423,7 @@ class EasyModel(SQLModel):
         cls: Type[T], 
         id: int, 
         data: Dict[str, Any], 
-        include_relationships: bool = False
+        include_relationships: bool = True
     ) -> Optional[T]:
         """
         Update an existing record by its ID.
@@ -567,6 +567,376 @@ class EasyModel(SQLModel):
         async with self.__class__.get_session() as session:
             # Refresh the instance with the specified relationships
             await session.refresh(self, attribute_names=related_fields)
+
+    @classmethod
+    async def select(
+        cls: Type[T], 
+        criteria: Dict[str, Any] = None,
+        all: bool = False,
+        first: bool = False,
+        include_relationships: bool = True,
+        order_by: Optional[Union[str, List[str]]] = None,
+        limit: Optional[int] = None
+    ) -> Union[Optional[T], List[T]]:
+        """
+        Retrieve record(s) by matching attribute values.
+        
+        Args:
+            criteria: Dictionary of field values to filter by (field: value)
+            all: If True, return all matching records, otherwise return only the first one
+            first: If True, return only the first record (equivalent to all=False)
+            include_relationships: If True, eagerly load all relationships
+            order_by: Field(s) to order by. Can be a string or list of strings.
+                      Prefix with '-' for descending order (e.g. '-created_at')
+            limit: Maximum number of records to retrieve (if all=True)
+                  If limit > 1, all is automatically set to True
+            
+        Returns:
+            A single model instance, a list of instances, or None if not found
+        """
+        if criteria is None:
+            criteria = {}
+            
+        # If limit is specified and > 1, automatically set all=True
+        if limit is not None and limit > 1:
+            all = True
+            
+        # Process wildcard searches (convert "*text" or "text*" to LIKE queries)
+        processed_criteria = {}
+        wildcard_conditions = []
+        
+        async with cls.get_session() as session:
+            statement = select(cls)
+            
+            # Process criteria
+            for key, value in criteria.items():
+                if isinstance(value, str) and ('*' in value):
+                    # Handle wildcard search
+                    like_pattern = value.replace('*', '%')
+                    field = getattr(cls, key)
+                    wildcard_conditions.append(field.like(like_pattern))
+                else:
+                    # Standard equality
+                    processed_criteria[key] = value
+            
+            # Apply standard criteria
+            if processed_criteria:
+                statement = statement.filter_by(**processed_criteria)
+                
+            # Apply wildcard conditions
+            for condition in wildcard_conditions:
+                statement = statement.filter(condition)
+            
+            # Apply ordering
+            statement = cls._apply_order_by(statement, order_by)
+            
+            # Apply limit if specified
+            if limit is not None:
+                statement = statement.limit(limit)
+            
+            if include_relationships:
+                # Get all relationship attributes, including auto-detected ones
+                for rel_name in cls._get_auto_relationship_fields():
+                    statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    
+            result = await session.execute(statement)
+            if all:
+                return result.scalars().all()
+            return result.scalars().first()
+    
+    @classmethod
+    async def insert(cls: Type[T], data: Union[Dict[str, Any], List[Dict[str, Any]]], include_relationships: bool = True) -> Union[T, List[T]]:
+        """
+        Insert one or more records.
+        
+        Args:
+            data: Dictionary of field values or a list of dictionaries for multiple records
+            include_relationships: If True, return the instance(s) with relationships loaded
+            
+        Returns:
+            The created model instance(s)
+        """
+        # Handle array of data (batch insert)
+        if isinstance(data, list):
+            async with cls.get_session() as session:
+                objects = []
+                
+                # Create objects
+                for item_data in data:
+                    # Extract relationship data
+                    relationship_data = {}
+                    attribute_data = {}
+                    
+                    for key, value in item_data.items():
+                        if isinstance(value, dict) and hasattr(cls, key) and key in cls._get_auto_relationship_fields():
+                            # This is a relationship dict
+                            relationship_data[key] = value
+                        else:
+                            # Regular attribute
+                            attribute_data[key] = value
+                    
+                    # Create object with non-relationship data
+                    obj = cls(**attribute_data)
+                    session.add(obj)
+                    objects.append(obj)
+                
+                # Flush to get IDs
+                await session.flush()  # Flush to get the ID
+                
+                # Process relationships if we found any
+                if relationship_data:
+                    for i, obj in enumerate(objects):
+                        # Process each relationship field
+                        for rel_name, rel_data in relationship_data.items():
+                            rel_attr = getattr(cls, rel_name)
+                            related_model = rel_attr.property.mapper.class_
+                            
+                            # Get or create the related object
+                            related_obj = await related_model.select(rel_data)
+                            if not related_obj:
+                                related_obj = await related_model.insert(rel_data)
+                                
+                            # Set the relationship
+                            setattr(obj, rel_name, related_obj)
+                
+                await session.commit()
+                
+                # Refresh with relationships if requested
+                if include_relationships:
+                    for obj in objects:
+                        await session.refresh(obj)
+                        
+                return objects
+        else:
+            # Extract relationship data from the input
+            relationship_data = {}
+            regular_data = {}
+            
+            # Handle foreign key references with nested dictionaries
+            for key, value in data.items():
+                if isinstance(value, dict) and hasattr(cls, key):
+                    # This is a relationship object
+                    relationship_data[key] = value
+                    
+                    # If there's a corresponding foreign key field, we'll handle it later
+                    foreign_key_name = f"{key}_id"
+                elif key.endswith('_id') and hasattr(cls, key):
+                    # Direct foreign key reference
+                    regular_data[key] = value
+                else:
+                    # Regular field
+                    regular_data[key] = value
+            
+            async with cls.get_session() as session:
+                # Create the main object with non-relationship data
+                obj = cls(**regular_data)
+                session.add(obj)
+                await session.flush()  # Flush to get the ID
+                
+                # Handle relationships if any
+                if relationship_data:
+                    for rel_name, rel_data in relationship_data.items():
+                        rel_attr = getattr(cls, rel_name)
+                        related_model = rel_attr.property.mapper.class_
+                        
+                        # Try to find existing related object or create new one
+                        related_obj = await related_model.select(rel_data)
+                        if not related_obj:
+                            related_obj = await related_model.insert(rel_data)
+                            
+                        # Set the relationship
+                        setattr(obj, rel_name, related_obj)
+                        
+                        # If there's a corresponding foreign key field, set it
+                        foreign_key_name = f"{rel_name}_id"
+                        if hasattr(obj, foreign_key_name):
+                            setattr(obj, foreign_key_name, related_obj.id)
+                
+                await session.commit()
+                
+                if include_relationships:
+                    # Refresh with relationships
+                    statement = select(cls).where(cls.id == obj.id)
+                    for rel_name in cls._get_auto_relationship_fields():
+                        statement = statement.options(selectinload(getattr(cls, rel_name)))
+                    result = await session.execute(statement)
+                    return result.scalars().first()
+                else:
+                    await session.refresh(obj)
+                    return obj
+
+    @classmethod
+    async def update(
+        cls: Type[T], 
+        new_values: Dict[str, Any],
+        where_criteria: Dict[str, Any] = None,
+        include_relationships: bool = True
+    ) -> Union[Optional[T], List[T]]:
+        """
+        Update record(s) matching the criteria with new values.
+        
+        Args:
+            new_values: Dictionary of field values to update
+            where_criteria: Dictionary of field values to filter by (field: value)
+                           If None, will use the 'id' from new_values if available
+            include_relationships: If True, return the instance with relationships loaded
+            
+        Returns:
+            The updated model instance(s) or None if not found
+        """
+        # If where_criteria not provided, check if we can use id from new_values
+        if where_criteria is None:
+            if 'id' in new_values:
+                # Use ID for specific record update
+                id_val = new_values['id']
+                where_criteria = {'id': id_val}
+                # Remove id from new_values to prevent updating it
+                new_values = {k: v for k, v in new_values.items() if k != 'id'}
+            else:
+                # No criteria specified, use empty dict to apply to all records (risky)
+                where_criteria = {}
+        
+        # Explicitly update updated_at
+        new_values["updated_at"] = datetime.now(tz.utc)
+        
+        async with cls.get_session() as session:
+            # Find objects to update first
+            to_update = await cls.select(where_criteria, all=True)
+            if not to_update:
+                return None
+                
+            # Extract relationship data from new_values
+            relationship_updates = {}
+            attribute_updates = {}
+            
+            for key, value in new_values.items():
+                if isinstance(value, dict) and hasattr(cls, key) and key in cls._get_auto_relationship_fields():
+                    # This is a relationship object
+                    relationship_updates[key] = value
+                else:
+                    # Regular attribute
+                    attribute_updates[key] = value
+            
+            # Build update statement for regular attributes
+            if attribute_updates:
+                # Process wildcard searches in where_criteria
+                processed_criteria = {}
+                wildcard_conditions = []
+                
+                for key, value in where_criteria.items():
+                    if isinstance(value, str) and ('*' in value):
+                        # Handle wildcard search
+                        like_pattern = value.replace('*', '%')
+                        field = getattr(cls, key)
+                        wildcard_conditions.append(field.like(like_pattern))
+                    else:
+                        # Standard equality
+                        processed_criteria[key] = value
+                
+                # Create update statement
+                update_stmt = sqlalchemy_update(cls).values(**attribute_updates)
+                
+                # Apply standard criteria
+                if processed_criteria:
+                    update_stmt = update_stmt.filter_by(**processed_criteria)
+                    
+                # Apply wildcard conditions
+                for condition in wildcard_conditions:
+                    update_stmt = update_stmt.filter(condition)
+                    
+                # Execute the update
+                await session.execute(update_stmt.execution_options(synchronize_session="fetch"))
+            
+            # Handle relationship updates separately (needs to be done object by object)
+            if relationship_updates:
+                for obj in to_update:
+                    for rel_name, rel_data in relationship_updates.items():
+                        rel_attr = getattr(cls, rel_name)
+                        related_model = rel_attr.property.mapper.class_
+                        
+                        # Try to find existing related object or create new one
+                        related_obj = await related_model.select(rel_data)
+                        if not related_obj:
+                            related_obj = await related_model.insert(rel_data)
+                            
+                        # Set the relationship
+                        setattr(obj, rel_name, related_obj)
+                        
+                        # If there's a corresponding foreign key field, set it
+                        foreign_key_name = f"{rel_name}_id"
+                        if hasattr(obj, foreign_key_name):
+                            setattr(obj, foreign_key_name, related_obj.id)
+            
+            await session.commit()
+            
+            # Return updated objects
+            if len(to_update) == 1:
+                if include_relationships:
+                    # Return the single updated object with relationships
+                    obj_id = to_update[0].id
+                    return await cls.get_with_related(obj_id, *cls._get_auto_relationship_fields())
+                else:
+                    return to_update[0]
+            else:
+                # Return all updated objects
+                if include_relationships:
+                    # Refresh all objects with relationships
+                    updated_ids = [obj.id for obj in to_update]
+                    return await cls.select({'id': {'in': updated_ids}}, all=True, include_relationships=True)
+                else:
+                    return to_update
+
+    @classmethod
+    async def delete(cls: Type[T], criteria: Dict[str, Any]) -> int:
+        """
+        Delete record(s) matching the criteria.
+        
+        Args:
+            criteria: Dictionary of field values to filter by (field: value)
+            
+        Returns:
+            Number of records deleted
+        """
+        async with cls.get_session() as session:
+            # Process wildcard searches in criteria
+            processed_criteria = {}
+            wildcard_conditions = []
+            
+            # If criteria is just an ID
+            if isinstance(criteria, int):
+                criteria = {'id': criteria}
+            
+            for key, value in criteria.items():
+                if isinstance(value, str) and ('*' in value):
+                    # Handle wildcard search
+                    like_pattern = value.replace('*', '%')
+                    field = getattr(cls, key)
+                    wildcard_conditions.append(field.like(like_pattern))
+                else:
+                    # Standard equality
+                    processed_criteria[key] = value
+            
+            # Find objects to delete
+            statement = select(cls)
+            
+            # Apply standard criteria
+            if processed_criteria:
+                statement = statement.filter_by(**processed_criteria)
+                
+            # Apply wildcard conditions
+            for condition in wildcard_conditions:
+                statement = statement.filter(condition)
+                
+            result = await session.execute(statement)
+            objects_to_delete = result.scalars().all()
+            
+            # Delete all matching objects
+            for obj in objects_to_delete:
+                await session.delete(obj)
+                
+            await session.commit()
+            
+            return len(objects_to_delete)
 
 # Register an event listener to update 'updated_at' on instance modifications.
 @event.listens_for(Session, "before_flush")

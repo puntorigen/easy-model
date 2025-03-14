@@ -15,6 +15,8 @@ This document provides comprehensive documentation for the async-easy-model pack
 9. [Automatic Schema Migrations](#automatic-schema-migrations)
 10. [Advanced Features](#advanced-features)
 11. [Examples](#examples)
+12. [Standardized API Methods](#standardized-api-methods)
+13. [API Reference](#api-reference)
 
 ## Installation
 
@@ -155,19 +157,27 @@ user = await User.insert({
     "username": "john_doe",
     "email": "john@example.com"
 })
+# Note: include_relationships=True is now the default!
 
 # Insert multiple records
-users = await User.insert_many([
+users = await User.insert([
     {"username": "user1", "email": "user1@example.com"},
     {"username": "user2", "email": "user2@example.com"}
 ])
+
+# Insert with relationships using nested dictionaries
+post = await Post.insert({
+    "title": "My First Post",
+    "content": "Hello world!",
+    "author": {"username": "john_doe"}  # Will automatically link to existing user
+})
 ```
 
 ### Read (Retrieve)
 
 ```python
 # Get by ID
-user = await User.get_by_id(1)
+user = await User.get_by_id(1)  # include_relationships=True is now the default!
 
 # Get by attribute
 users = await User.get_by_attribute(username="john_doe", all=True)
@@ -176,10 +186,15 @@ users = await User.get_by_attribute(username="john_doe", all=True)
 first_user = await User.get_by_attribute(is_active=True)
 
 # Get all records
-all_users = await User.all()
+all_users = await User.all()  # include_relationships=True is now the default!
 
 # Get limited records
 recent_users = await User.limit(10, order_by="-created_at")
+
+# Using standardized select method
+active_users = await User.select({"is_active": True}, all=True)
+admin = await User.select({"role": "admin"}, first=True)  # Get first admin
+users_by_date = await User.select({}, order_by="-created_at", limit=5)  # limit automatically sets all=True
 ```
 
 ### Update
@@ -195,6 +210,18 @@ await User.update_by_attribute(
     {"is_active": False},  # Update data
     is_active=True, role="guest"  # Filter criteria
 )
+
+# Using standardized update method with criteria
+await User.update(
+    {"email": "new_email@example.com"},  # Update data
+    {"username": "john_doe"}  # Filter criteria
+)
+
+# Update with relationships
+await User.update(
+    {"department": {"name": "Engineering"}},  # Update data with relationship
+    {"id": 1}  # Filter criteria
+)
 ```
 
 ### Delete
@@ -205,6 +232,9 @@ success = await User.delete(1)
 
 # Delete by attribute
 deleted_count = await User.delete_by_attribute(is_active=False)
+
+# Using standardized delete method with criteria
+await User.delete({"role": "guest"})  # Delete all guest users
 ```
 
 ## Relationship Handling
@@ -673,6 +703,161 @@ async def transaction_example():
         )
         # Transaction is automatically committed if no exceptions occur
         # or rolled back if an exception is raised
+```
+
+## Standardized API Methods
+
+Async-easy-model now provides standardized methods for all basic CRUD operations, making the API more consistent and intuitive.
+
+### Select Method
+
+The `select` method is a powerful way to retrieve records with a consistent interface:
+
+```python
+@classmethod
+async def select(
+    cls, 
+    criteria: Dict[str, Any] = None,  # Filter criteria as a dictionary
+    all: bool = False,                # Return all matching records
+    first: bool = False,              # Return only the first match
+    include_relationships: bool = True,  # Automatically load relationships
+    order_by: Optional[Union[str, List[str]]] = None,  # Field(s) to order by
+    limit: Optional[int] = None       # Maximum records to return
+) -> Union[Optional[T], List[T]]
+```
+
+**Key Features:**
+- Wildcard pattern matching with `*` (translated to SQL LIKE)
+- Automatic `all=True` when `limit > 1` is specified
+- Relationship eager loading enabled by default
+- Support for ordering by single or multiple fields
+
+**Examples:**
+
+```python
+# Basic usage
+users = await User.select({"is_active": True}, all=True)
+
+# With wildcard search
+users_with_gmail = await User.select({"email": "*@gmail.com"}, all=True)
+
+# Get first matching record
+admin = await User.select({"role": "admin"}, first=True)
+
+# With ordering
+newest_users = await User.select({}, order_by="-created_at", limit=5)
+# Note: specifying limit > 1 automatically sets all=True
+
+# Multiple field ordering
+sorted_users = await User.select({}, order_by=["last_name", "first_name"], all=True)
+```
+
+### Insert Method
+
+The enhanced `insert` method supports both single and multiple records, with relationship handling:
+
+```python
+@classmethod
+async def insert(
+    cls,
+    data: Union[Dict[str, Any], List[Dict[str, Any]]],
+    include_relationships: bool = True
+) -> Union[T, List[T]]
+```
+
+**Key Features:**
+- Insert single record or multiple records
+- Automatic relationship handling for nested dictionaries
+- Relationship insertion logic works with both foreign keys and dictionary lookups
+
+**Examples:**
+
+```python
+# Insert single record
+user = await User.insert({
+    "username": "john_doe",
+    "email": "john@example.com"
+})
+
+# Insert with relationship
+comment = await Comment.insert({
+    "text": "Great post!",
+    "post": {"id": 1},  # Link by ID
+    "author": {"username": "jane_doe"}  # Link by attribute lookup
+})
+
+# Insert multiple records
+products = await Product.insert([
+    {"name": "Product 1", "price": 10.99},
+    {"name": "Product 2", "price": 24.99}
+])
+```
+
+### Update Method
+
+The standardized `update` method supports updating records based on criteria:
+
+```python
+@classmethod
+async def update(
+    cls,
+    data: Dict[str, Any],
+    criteria: Optional[Union[int, Dict[str, Any]]] = None,
+    include_relationships: bool = True
+) -> Union[Optional[T], int]
+```
+
+**Key Features:**
+- Update by ID or arbitrary criteria
+- Support for updating relationship fields
+- Returns the updated record(s) or count
+
+**Examples:**
+
+```python
+# Update by ID
+user = await User.update({"email": "new@example.com"}, 1)
+
+# Update by criteria
+count = await User.update(
+    {"is_active": False},
+    {"last_login": None}  # Set all users without login to inactive
+)
+
+# Update with relationships
+await User.update(
+    {"department": {"name": "Sales"}},  # Update the department
+    {"username": "john_doe"}
+)
+```
+
+### Delete Method
+
+The standardized `delete` method provides a consistent way to delete records:
+
+```python
+@classmethod
+async def delete(
+    cls,
+    criteria: Optional[Union[int, Dict[str, Any]]] = None
+) -> Union[bool, int]
+```
+
+**Key Features:**
+- Delete by ID or arbitrary criteria
+- Returns boolean success for single record or count for multiple
+
+**Examples:**
+
+```python
+# Delete by ID
+success = await User.delete(1)
+
+# Delete by criteria
+deleted_count = await User.delete({"is_active": False})
+
+# Delete with compound criteria
+await Post.delete({"author": {"username": "john_doe"}, "is_published": False})
 ```
 
 ## Examples

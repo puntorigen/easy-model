@@ -12,8 +12,9 @@ This document provides comprehensive documentation for the async-easy-model pack
 6. [Relationship Handling](#relationship-handling)
 7. [Automatic Relationship Detection](#automatic-relationship-detection)
 8. [Query Methods](#query-methods)
-9. [Advanced Features](#advanced-features)
-10. [Examples](#examples)
+9. [Automatic Schema Migrations](#automatic-schema-migrations)
+10. [Advanced Features](#advanced-features)
+11. [Examples](#examples)
 
 ## Installation
 
@@ -504,6 +505,114 @@ The ordering capabilities in async-easy-model are powerful and flexible:
    ```
 
 These ordering capabilities can be used with all query methods (`all()`, `first()`, `limit()`, and `get_by_attribute()`), making it easy to retrieve data in the desired sequence without additional sorting in application code.
+
+## Automatic Schema Migrations
+
+EasyModel offers an automatic migration system that detects changes in your model definitions and applies appropriate migrations to your database schema without requiring manual migration scripts.
+
+### Overview
+
+The migration system tracks your model definitions with hash codes and detects when they change. When changes are detected, it automatically generates and applies the necessary database schema migrations. This ensures that your database tables always match your model definitions.
+
+### How It Works
+
+The migration process happens automatically when you call `init_db()`:
+
+1. EasyModel generates a hash code for each model definition based on:
+   - Table name
+   - Column definitions (name, type, constraints)
+   - Relationships
+
+2. These hashes are compared with previously stored hashes to detect changes.
+
+3. For changed or new models, EasyModel:
+   - Inspects the current database schema
+   - Compares it with the model definition
+   - Generates migration operations (create table, add/alter/drop column)
+   - Applies the migrations to update the database schema
+
+4. All migrations are tracked in a migration history file for reference.
+
+### Usage
+
+The migration system works automatically without any additional code:
+
+```python
+from async_easy_model import EasyModel, init_db, db_config, Field
+from typing import Optional
+
+# Configure your database
+db_config.configure_sqlite("database.db")
+
+# Define your model
+class User(EasyModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str
+    email: str
+    # Later, you might add a new field:
+    # is_active: bool = Field(default=True)
+
+# Initialize database with automatic migrations
+async def setup():
+    await init_db()  # This will detect and apply any needed migrations
+```
+
+### Migration Storage
+
+Migrations are tracked in a `.easy_model_migrations` directory in your project root:
+
+- `model_hashes.json`: Stores hashes of model definitions
+- `migration_history.json`: Records the migration history with timestamps
+
+### Advanced Migration Control
+
+For more control over the migration process, you can use the `MigrationManager` directly:
+
+```python
+from async_easy_model import MigrationManager
+from your_app.models import User, Post
+
+async def manage_migrations():
+    # Create a migration manager
+    migration_manager = MigrationManager()
+    
+    # Check for pending model changes without applying them
+    changes = await migration_manager.detect_model_changes([User, Post])
+    if changes:
+        print("Pending changes:")
+        for model_name, info in changes.items():
+            print(f"- {model_name}: {info['status']}")
+    
+    # Apply migrations for specific models
+    results = await migration_manager.migrate_models([User, Post])
+    if results:
+        print("Applied migrations:")
+        for model_name, operations in results.items():
+            for op in operations:
+                print(f"- {model_name}: {op['operation']} - {op.get('table_name')} {op.get('column_name', '')}")
+```
+
+### Migration Operations
+
+The migration system supports the following operations:
+
+- `create_table`: Creates a new table for a new model
+- `add_column`: Adds a new column to an existing table
+- `alter_column`: Changes the type or constraints of an existing column
+- `drop_column`: Removes a column from a table
+
+### Limitations
+
+While the automatic migration system is powerful, there are some limitations to be aware of:
+
+1. **Complex Migrations**: Very complex schema changes might require manual intervention
+2. **Data Migration**: The system handles schema changes but not data transformations
+3. **SQLite Constraints**: SQLite has limited support for altering columns (primarily adding new columns)
+
+If you encounter these limitations, you may need to:
+- Use the PostgreSQL backend for more advanced migration support
+- Manually modify your database schema for complex changes
+- Perform data migrations in your application code
 
 ## Advanced Features
 

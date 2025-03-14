@@ -16,6 +16,7 @@ A simplified SQLModel-based ORM for async database operations in Python. EasyMod
 - **Flexible ordering of query results with support for relationship fields**
 - **Simplified Field and Relationship definition syntax**
 - **Automatic relationship detection**
+- **Automatic schema migrations for evolving database models**
 
 ## Installation
 
@@ -354,6 +355,75 @@ books_by_author = await Book.all(order_by="author.name")
 
 # Get users ordered by their latest post date
 users_by_post = await User.all(order_by="-posts.created_at")
+```
+
+## Automatic Schema Migrations
+
+EasyModel now includes automatic database migration capabilities, similar to Alembic but requiring no manual configuration. This feature allows your database schema to automatically evolve as your model definitions change.
+
+### How Migrations Work
+
+When your application starts, EasyModel:
+
+1. Tracks your model schemas by generating and storing hash codes
+2. Detects when model definitions have changed since the last run
+3. Automatically applies appropriate migrations to update your database schema
+
+This process ensures that your database tables always match your model definitions, without requiring you to write manual migration scripts.
+
+```python
+from async_easy_model import EasyModel, init_db, db_config
+
+# Configure your database
+db_config.configure_sqlite("database.db")
+
+# Define your model
+class User(EasyModel, table=True):
+    username: str
+    email: str
+    # Later, you might add a new field:
+    # is_active: bool = Field(default=True)
+
+# Initialize database - migrations happen automatically
+async def setup():
+    await init_db()
+    # Any model changes will be detected and migrated automatically
+```
+
+### Migration Storage
+
+Migrations are tracked in a `.easy_model_migrations` directory, which contains:
+
+- `model_hashes.json`: Stores hashes of your model definitions
+- `migration_history.json`: Records all migrations that have been applied
+
+### Advanced Migration Control
+
+For more control over the migration process, you can use the `MigrationManager` directly:
+
+```python
+from async_easy_model import MigrationManager, EasyModel
+from your_app.models import User, Post
+
+async def check_pending_migrations():
+    migration_manager = MigrationManager()
+    changes = await migration_manager.detect_model_changes([User, Post])
+    
+    if changes:
+        print("Pending model changes:")
+        for model_name, info in changes.items():
+            print(f"- {model_name}: {info['status']}")
+    else:
+        print("All models are up to date.")
+
+async def apply_migrations():
+    migration_manager = MigrationManager()
+    results = await migration_manager.migrate_models([User, Post])
+    
+    if results:
+        print("Applied migrations:")
+        for model_name, operations in results.items():
+            print(f"- {model_name}: {len(operations)} operations")
 ```
 
 ## Configuration

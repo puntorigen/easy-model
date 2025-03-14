@@ -5,7 +5,7 @@ Async EasyModel: A simple, lightweight ORM for SQLModel with async support.
 from typing import Optional, Any
 from .model import EasyModel, init_db, db_config
 from sqlmodel import Field, Relationship as SQLModelRelationship  # Re-export Field directly
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 __all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships"]
 
 # Create a more user-friendly Relationship function
@@ -40,3 +40,6 @@ from .relationships import Relation
 
 # Import the automatic relationship features
 from .auto_relationships import enable_auto_relationships, disable_auto_relationships, process_auto_relationships
+
+# Add to __init__.py
+from .migrations import MigrationManager, check_and_migrate_models

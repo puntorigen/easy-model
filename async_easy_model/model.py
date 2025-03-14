@@ -584,6 +584,13 @@ async def init_db():
     except ImportError:
         has_auto_relationships = False
     
+    # Import migration system
+    try:
+        from .migrations import check_and_migrate_models
+        has_migrations = True
+    except ImportError:
+        has_migrations = False
+
     # Process auto-relationships before creating tables if enabled
     if has_auto_relationships and _auto_relationships_enabled:
         process_auto_relationships()
@@ -593,6 +600,17 @@ async def init_db():
     if not engine:
         raise ValueError("Database configuration is missing. Use db_config.configure_* methods first.")
     
+    # Get all SQLModel subclasses (our models)
+    model_classes = []
+    for cls_name, cls in globals().items():
+        if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
+            model_classes.append(cls)
+    
+    # Check for migrations first if the feature is available
+    if has_migrations:
+        await check_and_migrate_models(model_classes)
+    
+    # Create tables that don't exist yet
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     

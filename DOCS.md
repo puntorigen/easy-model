@@ -14,8 +14,8 @@ This document provides comprehensive documentation for the async-easy-model pack
 8. [Query Methods](#query-methods)
 9. [Automatic Schema Migrations](#automatic-schema-migrations)
 10. [Advanced Features](#advanced-features)
-11. [Examples](#examples)
-12. [Standardized API Methods](#standardized-api-methods)
+11. [Standardized API Methods](#standardized-api-methods)
+12. [Examples](#examples)
 13. [API Reference](#api-reference)
 
 ## Installation
@@ -36,7 +36,7 @@ db_config.configure_sqlite("database.db")
 
 # Define your model
 class User(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    #no need to specify id, created_at or updated_at since EasyModel provides them by default
     username: str = Field(unique=True)
     email: str
 
@@ -46,15 +46,15 @@ async def setup():
 
 # Use it in your async code
 async def main():
+    await setup()
     # Create a new user
     user = await User.insert({
         "username": "john_doe",
         "email": "john@example.com"
     })
     
-    # Get user by ID
-    retrieved_user = await User.get_by_id(user.id)
-    print(f"Retrieved user: {retrieved_user.username}")
+    # Get user ID
+    print(f"New user id: {user.id}")
 ```
 
 ## Database Configuration
@@ -121,12 +121,9 @@ from typing import Optional
 from datetime import datetime
 
 class User(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(unique=True)
     email: str
     is_active: bool = Field(default=True)
-    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now())
-    updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now())
 ```
 
 ### Field Types and Options
@@ -137,14 +134,12 @@ from typing import Optional
 from datetime import datetime
 
 class Product(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     description: Optional[str] = Field(default=None)
     price: float = Field(gt=0)
     stock: int = Field(default=0, ge=0)
     sku: str = Field(unique=True, max_length=20)
     is_available: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
 ```
 
 ## CRUD Operations
@@ -157,7 +152,6 @@ user = await User.insert({
     "username": "john_doe",
     "email": "john@example.com"
 })
-# Note: include_relationships=True is now the default!
 
 # Insert multiple records
 users = await User.insert([
@@ -176,51 +170,64 @@ post = await Post.insert({
 ### Read (Retrieve)
 
 ```python
-# Get by ID
-user = await User.get_by_id(1)  # include_relationships=True is now the default!
+# Select by ID
+user = await User.select({"id": 1})
 
-# Get by attribute
-users = await User.get_by_attribute(username="john_doe", all=True)
+# Select with criteria
+users = await User.select({"is_active": True}, all=True)
 
-# Get first matching record
-first_user = await User.get_by_attribute(is_active=True)
+# Select first matching record
+first_user = await User.select({"is_active": True}, first=True)
 
-# Get all records
-all_users = await User.all()  # include_relationships=True is now the default!
+# Select all records
+all_users = await User.select({}, all=True)
 
-# Get limited records
-recent_users = await User.limit(10, order_by="-created_at")
+# Select with wildcard pattern matching
+gmail_users = await User.select({"email": "*@gmail.com"}, all=True)
 
-# Using standardized select method
-active_users = await User.select({"is_active": True}, all=True)
-admin = await User.select({"role": "admin"}, first=True)  # Get first admin
-users_by_date = await User.select({}, order_by="-created_at", limit=5)  # limit automatically sets all=True
+# Select with ordering
+recent_users = await User.select({}, order_by="-created_at", all=True)
+
+# Select with limit
+latest_posts = await Post.select({}, order_by="-created_at", limit=5)
+# Note: limit > 1 automatically sets all=True
+
+# Select with multiple ordering fields
+sorted_users = await User.select({}, order_by=["last_name", "first_name"], all=True)
+
+# Select with relationship ordering
+posts_by_author = await Post.select({}, order_by="author.username", all=True)
+
+# Select with relationship criteria
+admin_posts = await Post.select({"author": {"role": "admin"}}, all=True)
 ```
 
 ### Update
 
 ```python
 # Update by ID
-updated_user = await User.update(1, {
-    "email": "new_email@example.com"
-})
+updated_user = await User.update({"email": "new@example.com"}, 1)
 
-# Update multiple records
-await User.update_by_attribute(
-    {"is_active": False},  # Update data
-    is_active=True, role="guest"  # Filter criteria
+# Update by criteria
+count = await User.update(
+    {"is_active": False},
+    {"last_login": None}
+)
+print(f"Updated {count} users")
+
+# Update with relationship criteria
+await Post.update(
+    {"status": "archived"},
+    {"author": {"username": "john_doe"}}
 )
 
-# Using standardized update method with criteria
+# Update nested relationship fields
 await User.update(
-    {"email": "new_email@example.com"},  # Update data
-    {"username": "john_doe"}  # Filter criteria
-)
-
-# Update with relationships
-await User.update(
-    {"department": {"name": "Engineering"}},  # Update data with relationship
-    {"id": 1}  # Filter criteria
+    {
+        "profile": {"bio": "New bio"},
+        "settings": {"notification": True}
+    },
+    {"username": "john_doe"}
 )
 ```
 
@@ -230,284 +237,202 @@ await User.update(
 # Delete by ID
 success = await User.delete(1)
 
-# Delete by attribute
-deleted_count = await User.delete_by_attribute(is_active=False)
+# Delete by criteria
+deleted_count = await User.delete({"is_active": False})
+print(f"Deleted {deleted_count} inactive users")
 
-# Using standardized delete method with criteria
-await User.delete({"role": "guest"})  # Delete all guest users
+# Delete with relationship criteria
+await Comment.delete({"post": {"title": "Old Post"}})
+
+# Delete with complex criteria
+await Post.delete({
+    "published": False,
+    "author": {"username": "john_doe"}
+})
 ```
 
 ## Relationship Handling
 
-### Defining Relationships
+EasyModel provides robust support for relationship handling. Relationships between models are automatically detected based on foreign key fields, allowing for easy querying of related data.
+
+### Accessing Relationship Fields
+
+Once you've fetched a model instance, you can directly access its relationship fields as properties, even after the database session is closed:
 
 ```python
-from async_easy_model import EasyModel, Field, Relationship, Relation
-from typing import List, Optional
+# Get a user with relationships (default behavior - include_relationships=True)
+user = await User.select({"username": "jane_doe"})
 
-# Method 1: Using SQLModel's Relationship
-class Author(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    books: List["Book"] = Relationship(back_populates="author")
+# Access to-many relationship directly
+for cart_item in user.shoppingcarts:
+    print(f"Item: {cart_item.quantity} x {cart_item.product.name}")
 
-class Book(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    title: str
-    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
-    author: Optional[Author] = Relationship(back_populates="books")
-
-# Method 2: Using EasyModel's Relation helper for more readable code
-class Category(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    # Using Relation.many for a more readable relationship definition
-    products: List["Product"] = Relation.many("category")
-
-class Product(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    category_id: Optional[int] = Field(default=None, foreign_key="category.id")
-    # Using Relation.one for a more readable relationship definition
-    category: Optional[Category] = Relation.one("products")
+# Access to-one relationship directly
+post = await Post.select({"id": 1})
+print(f"Author: {post.author.username}")
 ```
 
-The `Relation` class provides a more intuitive way to define relationships:
+### Loading Relationships
 
-- `Relation.one(back_populates)`: For the "one" side of a one-to-many relationship
-- `Relation.many(back_populates)`: For the "many" side of a one-to-many relationship
-- `Relation.many_to_many(back_populates, link_model)`: For many-to-many relationships
-
-This approach makes the relationship definitions more readable and self-documenting.
-
-### Loading Related Objects
+Relationships are automatically loaded when you fetch models using the `select()`, `get_by_id()`, or other retrieval methods with `include_relationships=True` (which is the default).
 
 ```python
-# Method 1: Eager loading with include_relationships
-author = await Author.get_by_id(1, include_relationships=True)
-for book in author.books:
-    print(f"Book: {book.title}")
+# Relationships are loaded by default
+user = await User.select({"username": "john_doe"})
+print(f"User has {len(user.posts)} posts")
 
-# Method 2: Using get_with_related
-book = await Book.get_with_related(1, "author")
-print(f"Author: {book.author.name}")
-
-# Method 3: Loading relationships after fetching
-product = await Product.get_by_id(1)
-await product.load_related("category")
-print(f"Category: {product.category.name}")
+# If you don't need relationships, you can disable them for better performance
+user = await User.select({"username": "john_doe"}, include_relationships=False)
+# Note: trying to access relationships here would require an active session
 ```
 
-### Creating with Related Objects
+### Loading Specific Relationships
+
+For performance reasons, you might want to load only specific relationships:
 
 ```python
-# Create an author with books in a single transaction
-new_author = await Author.create_with_related(
-    data={"name": "Jane Doe"},
-    related_data={
-        "books": [
-            {"title": "Book One"},
-            {"title": "Book Two"}
-        ]
-    }
-)
+# Load specific relationships for an existing model instance
+user = await User.select({"username": "john_doe"}, include_relationships=False)
+await user.load_related("posts", "profile")
+
+# Get a model with specific relationships loaded
+user = await User.get_with_related(1, ["posts", "comments"])
+```
+
+### Creating with Relationships
+
+You can create models with relationships in a single operation:
+
+```python
+# Create a user with related posts
+user = await User.insert({
+    "username": "another_user",
+    "email": "another@example.com",
+    "posts": [
+        {"title": "My Post", "content": "Post content"}
+    ]
+})
 ```
 
 ### Converting to Dictionary with Relationships
 
-```python
-# Convert to dictionary including relationships
-author = await Author.get_with_related(1, "books")
-author_dict = author.to_dict(include_relationships=True)
+The `to_dict()` method allows you to convert a model instance to a dictionary, including its relationships:
 
-# Control the depth of nested relationships
-deep_dict = author.to_dict(include_relationships=True, max_depth=2)
+```python
+# Get a model with relationships
+user = await User.select({"username": "john_doe"})
+
+# Convert to dictionary with default depth (4)
+user_dict = user.to_dict()
+
+# Control the depth of relationships
+user_dict_shallow = user.to_dict(max_depth=1)  # Only immediate relationships
+user_dict_no_rel = user.to_dict(include_relationships=False)  # No relationships
 ```
+
+### Relationship Features Summary
+
+- **Direct Access**: Access relationship fields directly as properties (`user.posts`)
+- **Eager Loading**: Relationships are loaded by default with `include_relationships=True`
+- **Selective Loading**: Load specific relationships with `load_related()` or `get_with_related()`
+- **Dictionary Conversion**: Convert models to dictionaries with relationship support via `to_dict()`
+- **Nested Updates**: Update relationships when creating or updating models
 
 ## Automatic Relationship Detection
 
-### Enabling Auto-Relationships
+EasyModel provides a powerful feature that automatically detects and sets up relationships between models based on foreign key fields. This eliminates the need to manually define relationships using SQLModel's `Relationship` class.
+
+### How It Works
+
+The automatic relationship detection system works as follows:
+
+1. When you call `init_db()`, the system scans all models that inherit from `EasyModel`
+2. It identifies foreign key fields (either explicitly defined with `foreign_key` or using naming conventions like `user_id`)
+3. It automatically sets up bidirectional relationships between models
+4. For each foreign key, it creates:
+   - A to-one relationship on the model with the foreign key (e.g., `cart.user`)
+   - A to-many relationship on the referenced model (e.g., `user.shoppingcarts`)
+
+### Example
 
 ```python
-from async_easy_model import enable_auto_relationships, EasyModel, init_db, Field
-from typing import Optional
-
-# Enable automatic relationship detection before defining your models
-enable_auto_relationships()
-
-# Define models with foreign keys but without explicit relationships
-class Department(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    # No explicit 'employees' relationship needed!
-
-class Employee(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    department_id: Optional[int] = Field(default=None, foreign_key="department.id")
-    # No explicit 'department' relationship needed!
-```
-
-### Using Auto-Detected Relationships
-
-```python
-# Relationships are automatically detected and can be used like explicit ones
-department = await Department.get_by_id(1, include_relationships=True)
-for employee in department.employees:
-    print(f"Employee: {employee.name}")
-
-employee = await Employee.get_by_id(1, include_relationships=True)
-print(f"Department: {employee.department.name}")
-```
-
-### Compatibility with SQLModel
-
-If you encounter issues with automatic relationship detection due to conflicts with SQLModel's metaclass, you can:
-
-1. Use explicit relationship definitions with SQLModel's `Relationship` or `Relation` helpers
-2. Enable auto-relationships without patching the metaclass and set up relationships manually after model definition
-
-```python
-from async_easy_model import enable_auto_relationships, setup_relationship_between_models
 from async_easy_model import EasyModel, Field
 from typing import Optional
 
-# Enable without patching SQLModel's metaclass
-enable_auto_relationships(patch_metaclass=False)
-
-# Define models with foreign keys but without explicit relationships
+# Define your models without explicit relationship definitions
 class Department(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     name: str
+    # here we get a 'employees' field automatically available due to the foreign key on Employee
 
 class Employee(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     department_id: Optional[int] = Field(default=None, foreign_key="department.id")
+    # No explicit 'department' relationship needed!
+    # here we get a 'department' field (Department class) automatically available due to the foreign key on department_id
 
-# Manually set up relationships after model definition
-setup_relationship_between_models(
-    source_model=Employee,
-    target_model=Department,
-    foreign_key_name="department_id",
-    source_attr_name="department",  # Employee.department
-    target_attr_name="employees"    # Department.employees
-)
+# Initialize the database (this will set up relationships)
+await init_db()
+
+# Now you can use relationships directly
+department = await Department.insert({"name": "Engineering"})
+employee = await Employee.insert({"name": "John Doe", "department_id": department.id})
+
+# Access the to-one relationship
+await employee.load_related("department")
+print(f"{employee.name} works in the {employee.department.name} department")
+
+# Access the to-many relationship
+await department.load_related("employees")
+print(f"The {department.name} department has {len(department.employees)} employees")
+
+# Or using select with include_relationships=True (default)
+department = await Department.select({"id": department.id})
+print(f"Department employees: {[emp.name for emp in department.employees]}")
 ```
 
-### How Automatic Relationship Detection Works
+### Foreign Key Naming Conventions
 
-The automatic relationship detection feature works by:
+The system detects foreign keys based on:
 
-1. Scanning model definitions for foreign key fields
-2. Identifying the target model from the foreign key reference
-3. Setting up bidirectional relationships between models
-4. Registering relationships with SQLModel's metadata
+1. Explicit foreign key definitions: `field: int = Field(foreign_key="table.column")`
+2. Naming convention: Fields named `<table_singular>_id` (e.g., `user_id` referring to the `users` table)
 
-This allows you to simply define the foreign key fields and let the library handle the relationship setup. The naming convention used for automatic relationships is:
+The relationship fields are named intelligently:
+- The to-one field uses the name without the `_id` suffix (e.g., `user_id` → `user`)
+- The to-many field uses the pluralized form of the referencing model's table name (e.g., `users` → `employees`)
 
-- For to-one relationships: The name is derived from the foreign key field by removing the "_id" suffix (e.g., "author_id" → "author")
-- For to-many relationships: The pluralized name of the source model (e.g., "book" → "books")
+### Accessing Auto-Detected Relationships
+
+Once relationships are set up, you can access them directly on model instances:
+
+```python
+# Access to-one relationships
+user = await User.select({"username": "john_doe"})
+print(f"First shopping cart product: {user.shoppingcarts[0].product.name}")
+
+# Access to-many relationships  
+product = await Product.select({"id": 1})
+print(f"This product appears in {len(product.shoppingcarts)} shopping carts")
+```
+
+### Customizing Automatic Relationships
+
+For most cases, automatic detection works without configuration, but you can customize it:
+
+```python
+from async_easy_model.auto_relationships import setup_relationship_between_models
+
+# Manual setup for custom relationship names
+setup_relationship_between_models(
+    Order, 
+    Customer, 
+    "customer_id", 
+    source_attr_name="buyer",  # Custom name on Order side
+    target_attr_name="purchases"  # Custom name on Customer side
+)
+```
 
 ## Query Methods
-
-### all() - Retrieving All Records
-
-```python
-# Basic usage
-all_users = await User.all()
-
-# With relationships
-all_users_with_relations = await User.all(include_relationships=True)
-
-# With ordering (ascending)
-ordered_users = await User.all(order_by="username")
-
-# With ordering (descending)
-newest_users = await User.all(order_by="-created_at")
-
-# With multiple ordering fields
-complex_order = await User.all(order_by=["last_name", "first_name"])
-
-# With relationship field ordering
-books_by_author = await Book.all(order_by="author.name")
-users_by_post_date = await User.all(order_by="-posts.created_at")
-```
-
-### first() - Getting the First Record
-
-```python
-# Basic usage
-first_user = await User.first()
-
-# With relationships
-first_user_with_relations = await User.first(include_relationships=True)
-
-# With ordering (get oldest user)
-oldest_user = await User.first(order_by="created_at")
-
-# With ordering (get newest user)
-newest_user = await User.first(order_by="-created_at")
-
-# With relationship field ordering
-first_book_by_author = await Book.first(order_by="author.name")
-```
-
-### limit() - Limiting Results
-
-```python
-# Basic usage
-recent_users = await User.limit(10)
-
-# With relationships
-recent_users_with_relations = await User.limit(5, include_relationships=True)
-
-# With ordering
-newest_users = await User.limit(5, order_by="-created_at")
-
-# With multiple ordering fields
-complex_limit = await User.limit(5, order_by=["last_name", "first_name"])
-
-# With relationship field ordering
-top_books_by_author = await Book.limit(5, order_by="author.name")
-```
-
-### get_by_attribute() - Filtering Records
-
-```python
-# Get a single record
-user = await User.get_by_attribute(username="john_doe")
-
-# Get all matching records
-active_users = await User.get_by_attribute(all=True, is_active=True)
-
-# With relationships
-user_with_relations = await User.get_by_attribute(
-    username="john_doe",
-    include_relationships=True
-)
-
-# With ordering
-latest_admin = await User.get_by_attribute(
-    role="admin",
-    order_by="-created_at"
-)
-
-# Multiple filter criteria with ordering
-filtered_users = await User.get_by_attribute(
-    all=True,
-    is_active=True,
-    role="user",
-    order_by="username"
-)
-
-# With relationship field ordering
-books_by_author = await Book.get_by_attribute(
-    all=True,
-    published=True,
-    order_by="author.name"
-)
-```
 
 ### Ordering Capabilities
 
@@ -515,26 +440,26 @@ The ordering capabilities in async-easy-model are powerful and flexible:
 
 1. **Ascending Order**: By default, results are ordered in ascending order
    ```python
-   users = await User.all(order_by="username")  # A to Z
+   users = await User.select({}, order_by="username", all=True)  # A to Z
    ```
 
 2. **Descending Order**: Prefix the field name with a minus sign (`-`) for descending order
    ```python
-   users = await User.all(order_by="-created_at")  # Newest first
+   users = await User.select({}, order_by="-created_at", all=True)  # Newest first
    ```
 
 3. **Multiple Field Ordering**: Pass a list of field names to order by multiple fields
    ```python
-   users = await User.all(order_by=["last_name", "first_name"])  # Sort by last name, then first name
+   users = await User.select({}, order_by=["last_name", "first_name"], all=True)  # Sort by last name, then first name
    ```
 
 4. **Relationship Field Ordering**: Use dot notation to order by fields in related models
    ```python
-   books = await Book.all(order_by="author.name")  # Books ordered by author name
-   posts = await Post.all(order_by="-user.created_at")  # Posts ordered by user creation date (newest first)
+   books = await Book.select({}, order_by="author.name", all=True)  # Books ordered by author name
+   posts = await Post.select({}, order_by="-user.created_at", all=True)  # Posts ordered by user creation date (newest first)
    ```
 
-These ordering capabilities can be used with all query methods (`all()`, `first()`, `limit()`, and `get_by_attribute()`), making it easy to retrieve data in the desired sequence without additional sorting in application code.
+These ordering capabilities can be used with the `select()` method, making it easy to retrieve data in the desired sequence without additional sorting in application code.
 
 ## Automatic Schema Migrations
 
@@ -576,8 +501,7 @@ db_config.configure_sqlite("database.db")
 
 # Define your model
 class User(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    username: str
+    username: str = Field(unique=True)
     email: str
     # Later, you might add a new field:
     # is_active: bool = Field(default=True)
@@ -705,72 +629,9 @@ async def transaction_example():
         # or rolled back if an exception is raised
 ```
 
-## Standardized API Methods
-
-Async-easy-model now provides standardized methods for all basic CRUD operations, making the API more consistent and intuitive.
-
-### Select Method
-
-The `select` method is a powerful way to retrieve records with a consistent interface:
-
-```python
-@classmethod
-async def select(
-    cls, 
-    criteria: Dict[str, Any] = None,  # Filter criteria as a dictionary
-    all: bool = False,                # Return all matching records
-    first: bool = False,              # Return only the first match
-    include_relationships: bool = True,  # Automatically load relationships
-    order_by: Optional[Union[str, List[str]]] = None,  # Field(s) to order by
-    limit: Optional[int] = None       # Maximum records to return
-) -> Union[Optional[T], List[T]]
-```
-
-**Key Features:**
-- Wildcard pattern matching with `*` (translated to SQL LIKE)
-- Automatic `all=True` when `limit > 1` is specified
-- Relationship eager loading enabled by default
-- Support for ordering by single or multiple fields
-
-**Examples:**
-
-```python
-# Basic usage
-users = await User.select({"is_active": True}, all=True)
-
-# With wildcard search
-users_with_gmail = await User.select({"email": "*@gmail.com"}, all=True)
-
-# Get first matching record
-admin = await User.select({"role": "admin"}, first=True)
-
-# With ordering
-newest_users = await User.select({}, order_by="-created_at", limit=5)
-# Note: specifying limit > 1 automatically sets all=True
-
-# Multiple field ordering
-sorted_users = await User.select({}, order_by=["last_name", "first_name"], all=True)
-```
+## Examples
 
 ### Insert Method
-
-The enhanced `insert` method supports both single and multiple records, with relationship handling:
-
-```python
-@classmethod
-async def insert(
-    cls,
-    data: Union[Dict[str, Any], List[Dict[str, Any]]],
-    include_relationships: bool = True
-) -> Union[T, List[T]]
-```
-
-**Key Features:**
-- Insert single record or multiple records
-- Automatic relationship handling for nested dictionaries
-- Relationship insertion logic works with both foreign keys and dictionary lookups
-
-**Examples:**
 
 ```python
 # Insert single record
@@ -795,25 +656,6 @@ products = await Product.insert([
 
 ### Update Method
 
-The standardized `update` method supports updating records based on criteria:
-
-```python
-@classmethod
-async def update(
-    cls,
-    data: Dict[str, Any],
-    criteria: Optional[Union[int, Dict[str, Any]]] = None,
-    include_relationships: bool = True
-) -> Union[Optional[T], int]
-```
-
-**Key Features:**
-- Update by ID or arbitrary criteria
-- Support for updating relationship fields
-- Returns the updated record(s) or count
-
-**Examples:**
-
 ```python
 # Update by ID
 user = await User.update({"email": "new@example.com"}, 1)
@@ -833,22 +675,6 @@ await User.update(
 
 ### Delete Method
 
-The standardized `delete` method provides a consistent way to delete records:
-
-```python
-@classmethod
-async def delete(
-    cls,
-    criteria: Optional[Union[int, Dict[str, Any]]] = None
-) -> Union[bool, int]
-```
-
-**Key Features:**
-- Delete by ID or arbitrary criteria
-- Returns boolean success for single record or count for multiple
-
-**Examples:**
-
 ```python
 # Delete by ID
 success = await User.delete(1)
@@ -860,24 +686,178 @@ deleted_count = await User.delete({"is_active": False})
 await Post.delete({"author": {"username": "john_doe"}, "is_published": False})
 ```
 
-## Examples
+### Complete Example with Relationships
 
-The package includes several example scripts in the `examples` directory:
+This example demonstrates a complete workflow using EasyModel, including model definition, database initialization, and relationship field access:
 
-- `minimal_working_example.py`: Basic example of model definition and CRUD operations
-- `relationship_example.py`: Demonstrates relationship handling with SQLModel
-- `auto_relationship_test.py`: Tests automatic relationship detection
-- `simple_auto_relationship.py`: Simple example of auto-relationships with SQLite
-- `final_auto_relationship.py`: Complete example with explicit relationships
-- `simple_auto_detection.py`: Demonstrates manual relationship setup
-- `comprehensive_auto_rel_example.py`: Comprehensive example with multiple models
+```python
+import asyncio
+from async_easy_model import EasyModel, init_db, db_config, Field
+from typing import Optional
+from datetime import datetime
 
-To run an example:
+# Configure database
+db_config.configure_sqlite(":memory:")
 
-```bash
-cd /path/to/async-easy-model
-python examples/minimal_working_example.py
+# Define models with automatic relationships
+class User(EasyModel, table=True):
+    username: str = Field(unique=True)
+    email: str
+
+class Post(EasyModel, table=True):
+    title: str
+    content: str
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+
+class Comment(EasyModel, table=True):
+    text: str
+    post_id: Optional[int] = Field(default=None, foreign_key="post.id")
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+
+async def main():
+    # Initialize database and create tables
+    await init_db()
+    
+    # Create user
+    user = await User.insert({
+        "username": "john_doe",
+        "email": "john@example.com"
+    })
+    
+    # Create post with relationship to user
+    post = await Post.insert({
+        "title": "First Post",
+        "content": "Hello world!",
+        "user_id": user.id  # Link to user by ID
+    })
+    
+    # Create comment with relationship to post and user
+    comment = await Comment.insert({
+        "text": "Great post!",
+        "post_id": post.id,
+        "user": {"username": "john_doe"}  # Link to user by attribute lookup
+    })
+    
+    # Get user with relationships
+    john = await User.select({"username": "john_doe"})
+    
+    # Access relationship fields directly
+    print(f"User: {john.username}")
+    print(f"Posts: {len(john.posts)}")
+    for post in john.posts:
+        print(f"  - Post: {post.title}")
+        print(f"    Comments: {len(post.comments)}")
+        for comment in post.comments:
+            print(f"      * {comment.text} (by {comment.user.username})")
+    
+    # Query with relationship criteria
+    johns_comments = await Comment.select({
+        "user": {"username": "john_doe"}
+    }, all=True)
+    
+    print(f"\nJohn's comments: {len(johns_comments)}")
+    
+    # Update with relationships
+    await Post.update(
+        {"title": "Updated Title"},
+        {"user": {"username": "john_doe"}}
+    )
+    
+    # Verify update
+    updated_post = await Post.select({"id": post.id})
+    print(f"\nUpdated post title: {updated_post.title}")
+    
+    # Convert to dictionary with relationships
+    post_dict = updated_post.to_dict()
+    print(f"\nPost as dictionary: {post_dict}")
+    print(f"Author username: {post_dict['user']['username']}")
+
+# Run the example
+asyncio.run(main())
 ```
+
+### Shopping Cart Example
+
+This example demonstrates a more complex relationship structure with direct relationship field access:
+
+```python
+import asyncio
+from async_easy_model import EasyModel, init_db, db_config, Field
+from typing import Optional
+from datetime import datetime
+
+# Configure database
+db_config.configure_sqlite(":memory:")
+
+# Define models
+class User(EasyModel, table=True):
+    username: str = Field(unique=True)
+    email: str
+
+class Product(EasyModel, table=True):
+    name: str
+    price: float = Field(gt=0)
+
+class ShoppingCart(EasyModel, table=True):
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    product_id: Optional[int] = Field(default=None, foreign_key="product.id")
+    quantity: int = Field(default=1, gt=0)
+
+async def main():
+    # Initialize database
+    await init_db()
+    
+    # Create user
+    jane = await User.insert({
+        "username": "jane_doe",
+        "email": "jane@example.com"
+    })
+    
+    # Create products
+    products = await Product.insert([
+        {"name": "Product 1", "price": 10.99},
+        {"name": "Product 2", "price": 24.99},
+        {"name": "Product 3", "price": 15.50}
+    ])
+    
+    # Add items to Jane's cart
+    for product in products:
+        await ShoppingCart.insert({
+            "user_id": jane.id,
+            "product_id": product.id,
+            "quantity": 2
+        })
+    
+    # Retrieve user with relationships
+    jane = await User.select({"username": "jane_doe"})
+    
+    # Direct access to shopping carts
+    print(f"Jane's cart has {len(jane.shoppingcarts)} items:")
+    total = 0
+    for item in jane.shoppingcarts:
+        subtotal = item.quantity * item.product.price
+        total += subtotal
+        print(f"  - {item.quantity} x {item.product.name} (${item.product.price}) = ${subtotal:.2f}")
+    
+    print(f"Total: ${total:.2f}")
+    
+    # Access from product perspective
+    product = await Product.select({"name": "Product 2"})
+    print(f"\nProduct '{product.name}' is in {len(product.shoppingcarts)} carts")
+    
+    # Query with multiple relationship criteria
+    expensive_items = await ShoppingCart.select({
+        "user": {"username": "jane_doe"},
+        "product": {"price": 15.50}
+    }, all=True)
+    
+    print(f"\nJane has {len(expensive_items)} expensive items in her cart")
+
+# Run the example
+asyncio.run(main())
+```
+
+These examples demonstrate the power of EasyModel's relationship handling, including direct access to relationship fields, querying with nested criteria, and dictionary conversion with relationships.
 
 ## API Reference
 
@@ -888,71 +868,13 @@ The base model class that provides common async database operations.
 **Class Methods:**
 
 - `get_session()`: Get a database session for transactions
-- `insert(data)`: Insert a single record
-- `insert_many(data_list)`: Insert multiple records
-- `get_by_id(id, include_relationships=False)`: Get a record by ID
-- `get_by_attribute(**kwargs)`: Get records by attribute values
-- `all(include_relationships=False, order_by=None)`: Get all records
-- `first(include_relationships=False, order_by=None)`: Get the first record
-- `limit(count, include_relationships=False, order_by=None)`: Get a limited number of records
-- `update(id, data)`: Update a record by ID
-- `update_by_attribute(data, **kwargs)`: Update records by attribute values
-- `delete(id)`: Delete a record by ID
-- `delete_by_attribute(**kwargs)`: Delete records by attribute values
+- `insert(data)`: Insert a single or multiple records
+- `select(criteria, all=False, first=False, include_relationships=True, order_by=None, limit=None)`: Select records based on criteria
+- `update(data, criteria)`: Update records based on criteria
+- `delete(criteria)`: Delete records based on criteria
 - `get_with_related(id, *relationships)`: Get a record with specific relationships
-- `create_with_related(data, related_data)`: Create a record with related records
 
 **Instance Methods:**
 
 - `load_related(*relationships)`: Load relationships for an instance
 - `to_dict(include_relationships=False, max_depth=1)`: Convert instance to dictionary
-
-### Relation Class
-
-A helper class that provides a more intuitive way to define relationships.
-
-**Class Methods:**
-
-- `Relation.one(back_populates, **kwargs)`: Define a to-one relationship
-- `Relation.many(back_populates, **kwargs)`: Define a to-many relationship
-- `Relation.many_to_many(back_populates, link_model, **kwargs)`: Define a many-to-many relationship
-
-**Example:**
-
-```python
-class Author(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    # Using Relation.many for a more readable relationship definition
-    books: List["Book"] = Relation.many("author")
-
-class Book(EasyModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    title: str
-    author_id: Optional[int] = Field(default=None, foreign_key="author.id")
-    # Using Relation.one for a more readable relationship definition
-    author: Optional[Author] = Relation.one("books")
-```
-
-### Database Configuration
-
-The `db_config` module provides methods for configuring the database connection.
-
-**Methods:**
-
-- `configure_sqlite(database_path)`: Configure SQLite database
-- `configure_postgres(user, password, host, port, database)`: Configure PostgreSQL database
-- `set_connection_url(url)`: Set the connection URL directly
-- `get_connection_url()`: Get the current connection URL
-- `get_engine()`: Get the SQLAlchemy engine
-- `get_session_maker()`: Get the session maker
-
-### Auto-Relationships
-
-The `auto_relationships` module provides functions for automatic relationship detection.
-
-**Functions:**
-
-- `enable_auto_relationships(patch_metaclass=False)`: Enable automatic relationship detection
-- `setup_relationship_between_models(source_model, target_model, foreign_key_name, source_attr_name=None, target_attr_name=None)`: Set up relationships between models
-- `setup_auto_relationships_for_model(model_cls)`: Set up automatic relationships for a model

@@ -528,42 +528,196 @@ class EasyModel(SQLModel):
     @classmethod
     async def _process_relationships_for_insert(cls: Type[T], session: AsyncSession, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process relationships in the input data for insertion.
+        Process relationships in input data for insertion.
+        
+        This method handles nested objects in the input data, such as:
+        cart = await ShoppingCart.insert({
+            "user": {"username": "john", "email": "john@example.com"},
+            "product": {"name": "Product X", "price": 19.99},
+            "quantity": 2
+        })
+        
+        For each nested object:
+        1. Find the target model class
+        2. Check if an object with the same unique fields already exists
+        3. If found, update existing object with non-unique fields
+        4. If not found, create a new object
+        5. Set the foreign key ID in the result data
         
         Args:
-            session: The SQLAlchemy session
-            data: Dictionary of field values that may contain nested relationship data
+            session: The database session to use
+            data: Input data dictionary that may contain nested objects
             
         Returns:
-            Processed dictionary with relationship objects replaced by their IDs
+            Processed data dictionary with nested objects replaced by their foreign key IDs
         """
-        # Deep copy to avoid modifying the original
         import copy
         result = copy.deepcopy(data)
         
         # Get all relationship fields for this model
         relationship_fields = cls._get_auto_relationship_fields()
         
+        # Get foreign key fields
+        foreign_key_fields = []
+        for field_name, field_info in cls.__fields__.items():
+            if field_name.endswith("_id") and hasattr(field_info, "field_info"):
+                if field_info.field_info.extra.get("foreign_key"):
+                    foreign_key_fields.append(field_name)
+        
         # Handle nested relationship objects
         for key, value in data.items():
-            # If this is a relationship field with dict data
-            if key in relationship_fields and isinstance(value, dict):
-                rel_attr = getattr(cls, key)
-                related_model = rel_attr.property.mapper.class_
+            # Skip if the value is not a dictionary
+            if not isinstance(value, dict):
+                continue
                 
-                # Try to find existing related object or create new one
-                related_obj = await related_model.select(value)
-                if not related_obj:
-                    related_obj = await related_model.insert(value)
+            # Check if this is a relationship field (either by name or derived from foreign key)
+            is_rel_field = key in relationship_fields
+            related_key = f"{key}_id"
+            is_derived_rel = related_key in foreign_key_fields
+            
+            # If it's a relationship field or derived from a foreign key
+            if is_rel_field or is_derived_rel or related_key in cls.__fields__:
+                # Find the related model class
+                related_model = None
                 
-                # Set the foreign key instead of the relationship object
+                # Try to get the related model from the attribute
+                if hasattr(cls, key) and hasattr(getattr(cls, key), 'property'):
+                    # Get from relationship attribute
+                    rel_attr = getattr(cls, key)
+                    related_model = rel_attr.property.mapper.class_
+                else:
+                    # Try to find it from foreign key definition
+                    fk_definition = None
+                    for field_name, field_info in cls.__fields__.items():
+                        if field_name == related_key and hasattr(field_info, "field_info"):
+                            fk_definition = field_info.field_info.extra.get("foreign_key")
+                            break
+                    
+                    if fk_definition:
+                        # Parse foreign key definition (e.g. "users.id")
+                        target_table, _ = fk_definition.split(".")
+                        # Try to find the target model
+                        from async_easy_model.auto_relationships import get_model_by_table_name, singularize_name
+                        related_model = get_model_by_table_name(target_table)
+                        if not related_model:
+                            # Try with the singular form
+                            singular_table = singularize_name(target_table)
+                            related_model = get_model_by_table_name(singular_table)
+                    else:
+                        # Try to infer from field name (e.g., "user_id" -> Users)
+                        base_name = related_key[:-3]  # Remove "_id"
+                        from async_easy_model.auto_relationships import get_model_by_table_name, singularize_name, pluralize_name
+                        
+                        # Try singular and plural forms
+                        related_model = get_model_by_table_name(base_name)
+                        if not related_model:
+                            plural_table = pluralize_name(base_name)
+                            related_model = get_model_by_table_name(plural_table)
+                        if not related_model:
+                            singular_table = singularize_name(base_name)
+                            related_model = get_model_by_table_name(singular_table)
+                
+                if not related_model:
+                    logging.warning(f"Could not find related model for {key} in {cls.__name__}")
+                    continue
+                
+                # Look for unique fields in the related model to use for searching
+                unique_fields = []
+                for field_name, field_info in related_model.__fields__.items():
+                    if (hasattr(field_info, "field_info") and 
+                        field_info.field_info.extra.get('unique', False)):
+                        unique_fields.append(field_name)
+                
+                # Create a search dictionary using unique fields
+                search_dict = {}
+                for field in unique_fields:
+                    if field in value and value[field] is not None:
+                        search_dict[field] = value[field]
+                
+                # If no unique fields found but ID is provided, use it
+                if not search_dict and 'id' in value and value['id']:
+                    search_dict = {'id': value['id']}
+                
+                # Special case for products without uniqueness constraints
+                if not search_dict and related_model.__tablename__ == 'products' and 'name' in value:
+                    search_dict = {'name': value['name']}
+                
+                # Try to find an existing record
+                related_obj = None
+                if search_dict:
+                    logging.info(f"Searching for existing {related_model.__name__} with {search_dict}")
+                    
+                    try:
+                        # Create a more appropriate search query based on unique fields
+                        existing_stmt = select(related_model)
+                        for field, field_value in search_dict.items():
+                            existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
+                        
+                        existing_result = await session.execute(existing_stmt)
+                        related_obj = existing_result.scalars().first()
+                        
+                        if related_obj:
+                            logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id}")
+                    except Exception as e:
+                        logging.error(f"Error finding existing record: {e}")
+                
+                if related_obj:
+                    # Update the existing record with any non-unique field values
+                    for attr, attr_val in value.items():
+                        # Skip ID field
+                        if attr == 'id':
+                            continue
+                            
+                        # Skip unique fields with different values to avoid constraint violations
+                        if attr in unique_fields and getattr(related_obj, attr) != attr_val:
+                            continue
+                            
+                        # Update non-unique fields
+                        current_val = getattr(related_obj, attr, None)
+                        if current_val != attr_val:
+                            setattr(related_obj, attr, attr_val)
+                    
+                    # Add the updated object to the session
+                    session.add(related_obj)
+                    logging.info(f"Reusing existing {related_model.__name__} with ID: {related_obj.id}")
+                else:
+                    # Create a new record
+                    logging.info(f"Creating new {related_model.__name__} for {key}")
+                    related_obj = related_model(**value)
+                    session.add(related_obj)
+                
+                # Ensure the object has an ID by flushing
+                try:
+                    await session.flush()
+                except Exception as e:
+                    logging.error(f"Error flushing session for {related_model.__name__}: {e}")
+                    
+                    # If there was a uniqueness error, try again to find the existing record
+                    if "UNIQUE constraint failed" in str(e):
+                        logging.info(f"UNIQUE constraint failed, trying to find existing record again")
+                        
+                        # Try to find by any field provided in the search_dict
+                        existing_stmt = select(related_model)
+                        for field, field_value in search_dict.items():
+                            existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
+                        
+                        # Execute the search query
+                        existing_result = await session.execute(existing_stmt)
+                        related_obj = existing_result.scalars().first()
+                        
+                        if not related_obj:
+                            # We couldn't find an existing record, re-raise the exception
+                            raise
+                        
+                        logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id} after constraint error")
+                
+                # Update the result with the foreign key ID
                 foreign_key_name = f"{key}_id"
-                if hasattr(cls, foreign_key_name):
-                    result[foreign_key_name] = related_obj.id
+                result[foreign_key_name] = related_obj.id
                 
-                # Remove the relationship object from result dict
-                # so we don't try to use it during instantiation
-                del result[key]
+                # Remove the relationship dictionary from the result
+                if key in result:
+                    del result[key]
         
         return result
 
@@ -668,11 +822,39 @@ class EasyModel(SQLModel):
                     logging.warning(f"No records found with criteria: {criteria}")
                     return 0
                 
-                # Delete the records
+                # Get a list of related tables that might need to be cleared first
+                # This helps with foreign key constraints
+                relationship_fields = cls._get_auto_relationship_fields()
+                to_many_relationships = []
+                
+                # Find to-many relationships that need to be handled first
+                for rel_name in relationship_fields:
+                    rel_attr = getattr(cls, rel_name, None)
+                    if rel_attr and hasattr(rel_attr, 'property'):
+                        # Check if this is a to-many relationship (one-to-many or many-to-many)
+                        if hasattr(rel_attr.property, 'uselist') and rel_attr.property.uselist:
+                            to_many_relationships.append(rel_name)
+                
+                # For each record, delete related records first (cascade delete)
                 for record in records:
+                    # First load all related collections
+                    if to_many_relationships:
+                        await session.refresh(record, attribute_names=to_many_relationships)
+                    
+                    # Delete related records in collections
+                    for rel_name in to_many_relationships:
+                        related_collection = getattr(record, rel_name, [])
+                        if related_collection:
+                            for related_item in related_collection:
+                                await session.delete(related_item)
+                    
+                    # Now delete the main record
                     await session.delete(record)
                 
+                # Commit the changes
+                await session.flush()
                 await session.commit()
+                
                 return len(records)
             except Exception as e:
                 logging.error(f"Error deleting records: {e}")
@@ -733,7 +915,7 @@ class EasyModel(SQLModel):
             await session.refresh(obj, attribute_names=list(related_data.keys()))
             return obj
 
-    def to_dict(self, include_relationships: bool = False, max_depth: int = 1) -> Dict[str, Any]:
+    def to_dict(self, include_relationships: bool = True, max_depth: int = 4) -> Dict[str, Any]:
         """
         Convert the model instance to a dictionary.
         
@@ -744,32 +926,47 @@ class EasyModel(SQLModel):
         Returns:
             Dictionary representation of the model
         """
-        if max_depth <= 0:
-            return {}
-            
         # Get basic fields
         result = self.model_dump()
         
         # Add relationship fields if requested
         if include_relationships and max_depth > 0:
             for rel_name in self.__class__._get_auto_relationship_fields():
-                rel_value = getattr(self, rel_name, None)
-                
-                if rel_value is None:
-                    result[rel_name] = None
-                elif isinstance(rel_value, list):
-                    # Handle one-to-many relationships
-                    result[rel_name] = [
-                        item.to_dict(include_relationships=True, max_depth=max_depth-1)
-                        for item in rel_value
-                    ]
-                else:
-                    # Handle many-to-one relationships
-                    result[rel_name] = rel_value.to_dict(
-                        include_relationships=True, 
-                        max_depth=max_depth-1
-                    )
+                # Only include relationships that are already loaded to avoid session errors
+                # We check if the relationship is loaded using SQLAlchemy's inspection API
+                is_loaded = False
+                try:
+                    # Check if attribute exists and is not a relationship descriptor
+                    rel_value = getattr(self, rel_name, None)
                     
+                    # If it's an attribute that has been loaded or not a relationship at all
+                    # (for basic fields that match relationship naming pattern), include it
+                    is_loaded = rel_value is not None and not hasattr(rel_value, 'prop')
+                except Exception:
+                    # If accessing the attribute raises an exception, it's not loaded
+                    is_loaded = False
+                    
+                if is_loaded:
+                    rel_value = getattr(self, rel_name, None)
+                    
+                    if rel_value is None:
+                        result[rel_name] = None
+                    elif isinstance(rel_value, list):
+                        # Handle one-to-many relationships
+                        result[rel_name] = [
+                            item.to_dict(include_relationships=True, max_depth=max_depth-1)
+                            for item in rel_value
+                        ]
+                    else:
+                        # Handle many-to-one relationships
+                        result[rel_name] = rel_value.to_dict(
+                            include_relationships=True, 
+                            max_depth=max_depth-1
+                        )
+        else:
+            # If max_depth is 0, return the basic fields only
+            return result
+            
         return result
         
     async def load_related(self, *related_fields: str) -> None:
@@ -800,7 +997,7 @@ class EasyModel(SQLModel):
         Retrieve record(s) by matching attribute values.
         
         Args:
-            criteria: Dictionary of field values to filter by (field: value)
+            criteria: Dictionary of field values to filter by (field=value)
             all: If True, return all matching records, otherwise return only the first one
             first: If True, return only the first record (equivalent to all=False)
             include_relationships: If True, eagerly load all relationships

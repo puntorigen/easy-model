@@ -35,8 +35,8 @@ class ShoppingCart(EasyModel, table=True):
     quantity: int = Field(default=1)
 
 # Configure SQLite database
-os.environ["SQLITE_FILE"] = "./test_auto_rel2.db"
-db_config.configure_sqlite("./test_auto_rel2.db")
+os.environ["SQLITE_FILE"] = "./test_auto_rel3.db"
+db_config.configure_sqlite("./test_auto_rel3.db")
 
 async def main():
     print("=== Simplified Usage Example for async-easy-model ===\n")
@@ -79,7 +79,7 @@ async def main():
 
     # Example 2: Select all users
     print("=== Example 2: Select all users ===")
-    all_users = await Users.all()
+    all_users = await Users.select(criteria={}, all=True)
     print(f"All users: {[user.username for user in all_users]}\n")
 
     # Example 3: Search a user by username
@@ -176,7 +176,7 @@ async def main():
     print("=== Example 8: Insert cart item with existing IDs ===")
     try:
         # Get references to existing users and products - more reliably
-        users = await Users.all()
+        users = await Users.select(criteria={}, all=True)
         if not users:
             print("No users found in database")
             raise ValueError("No users found")
@@ -208,11 +208,112 @@ async def main():
     except Exception as e:
         print(f"Cart item creation error: {e}\n")
 
-    # Example 9: Get cart items with relationships included
-    print("\n=== Example 9: Get cart items with relationships ===")
+    # Example 9: Insert cart item with nested relationships
+    print("=== Example 9: Insert cart item with nested relationships ===")
+    try:
+        # First, try to check if the nested user already exists
+        existing_nested_user = await Users.select(criteria={"username": "nested_user"}, first=True)
+        if existing_nested_user:
+            print(f"Found existing nested user with username: {existing_nested_user.username}")
+            # First delete any shopping cart records that use this user
+            await ShoppingCart.delete({"user_id": existing_nested_user.id})
+            print("Deleted existing cart items for nested_user")
+            # Now delete the user
+            await Users.delete({"username": "nested_user"})
+            print("Deleted existing nested_user to start fresh")
+        
+        # Generate a unique product name with timestamp
+        from datetime import datetime as dt
+        timestamp = dt.now().strftime("%Y%m%d%H%M%S")
+        unique_product_name = f"Nested Product {timestamp}"
+        
+        # Try creating a cart item with nested user and product objects
+        cart_item3 = await ShoppingCart.insert({
+            "user": {
+                "username": "nested_user",
+                "email": "nested@example.com"
+            }, 
+            "product": {
+                "name": unique_product_name,
+                "description": "This is a nested product",
+                "price": 15.99
+            },
+            "quantity": 3
+        })
+        
+        # Fetch and verify
+        cart_with_nested = await ShoppingCart.select(
+            criteria={"id": cart_item3.id}, 
+            include_relationships=True
+        )
+        if cart_with_nested:
+            print(f"Added to cart using nested relationships!")
+            print(f"Nested cart item details: {cart_with_nested.quantity} x {cart_with_nested.product.name} for {cart_with_nested.user.username}")
+            print(f"Product price: ${cart_with_nested.product.price}")
+            print(f"User email: {cart_with_nested.user.email}\n")
+    except Exception as e:
+        print(f"Nested relationship cart creation error: {e}\n")
+        
+    # Example 10: Reusing existing records with nested relationships
+    print("=== Example 10: Reusing existing records with nested relationships ===")
+    try:
+        # First, let's verify the existing user is present
+        existing_user = await Users.select(criteria={"username": "nested_user"}, first=True)
+        if existing_user:
+            print(f"Found existing user: {existing_user.username} with email: {existing_user.email}")
+            
+            # Instead of trying to update a unique field, let's first update the user
+            # Then use the updated user in the cart
+            await Users.update(
+                criteria={"username": "nested_user"},
+                data={"email": "modified@example.com"}
+            )
+            print(f"Updated user email separately")
+            
+            # Generate a unique product name with timestamp for testing reuse
+            from datetime import datetime as dt
+            timestamp = dt.now().strftime("%Y%m%d%H%M%S")
+            unique_product_name2 = f"Another Product {timestamp}"
+            
+            # Now try to create a cart with the same username but different email
+            # This should reuse the existing user without trying to modify it
+            cart_item4 = await ShoppingCart.insert({
+                "user_id": existing_user.id,  # Use ID directly instead of nested object
+                "product": {
+                    "name": unique_product_name2,
+                    "description": "This is a different product",
+                    "price": 25.50
+                },
+                "quantity": 1
+            })
+            
+            # Fetch and verify
+            cart_with_reused = await ShoppingCart.select(
+                criteria={"id": cart_item4.id}, 
+                include_relationships=True
+            )
+            
+            # Check if the user was reused
+            if cart_with_reused:
+                print(f"Reused relationship cart: {cart_with_reused.quantity} x {cart_with_reused.product.name}")
+                print(f"User email was updated: {cart_with_reused.user.email}")
+                print(f"User ID remained the same: {cart_with_reused.user.id == existing_user.id}")
+            
+            # Verify the user record directly
+            updated_user = await Users.select(criteria={"username": "nested_user"}, first=True)
+            if updated_user:
+                print(f"Updated user email: {updated_user.email}")
+        else:
+            print("Could not find the existing 'nested_user' record to test reuse functionality")
+    except Exception as e:
+        print(f"Reused relationship cart creation error: {e}\n")
+
+    # Example 11: Get cart items with relationships included
+    print("\n=== Example 11: Get cart items with relationships ===")
     try:
         # Get jane's reference
         jane = await Users.select({"username": "jane_doe"})
+        print(f"Jane's direct object with select:",jane.to_dict())
         
         # Get all cart items for jane with relationships included
         jane_cart = await ShoppingCart.select({"user_id": jane.id}, all=True, include_relationships=True)
@@ -223,38 +324,50 @@ async def main():
     except Exception as e:
         print(f"Error retrieving cart items: {e}\n")
 
-    # Example 10: Delete a product
-    print("\n=== Example 10: Delete a product ===")
+    # Example 12: Delete a product (with cascade delete)
+    print("\n=== Example 12: Delete a product ===")
     try:
-        # First, create a product specifically for deletion that isn't referenced by any cart items
-        new_product = await Products.insert({
-            "name": "Temporary Product", 
-            "description": "This product will be deleted", 
+        # Generate a unique product name for this example
+        from datetime import datetime as dt
+        timestamp = dt.now().strftime("%Y%m%d%H%M%S")
+        temp_product_name = f"Temporary Product {timestamp}"
+        
+        # Create product to delete
+        temp_product = await Products.insert({
+            "name": temp_product_name,
+            "description": "This product will be deleted",
             "price": 5.99
         })
+        print(f"Created temporary product: {temp_product_name}")
         
-        # Now we can safely delete it
-        result = await Products.delete({"name": "Temporary Product"})
-        print(f"Deleted {result} product(s) with name 'Temporary Product'")
+        # Create cart item for the temporary product
+        await ShoppingCart.insert({
+            "user_id": 1,  # Using john_updated
+            "product_id": temp_product.id,
+            "quantity": 1
+        })
+        print(f"Added temporary product to a cart")
         
-        # Try to delete a product that has references (will fail due to integrity constraints)
-        try:
-            result = await Products.delete({"name": "Product 3"})
-            print(f"Deleted {result} product(s) with name 'Product 3'")
-        except Exception as e:
-            print(f"Expected error when deleting referenced product: Foreign key constraint prevents deletion")
+        # Now try to delete the product
+        # This should cascade delete the associated cart items
+        await Products.delete({"id": temp_product.id})
+        print(f"Deleted temporary product and associated cart items")
         
-        # Verify the deletion results
-        remaining_products = await Products.all()
-        print(f"Remaining products: {[p.name for p in remaining_products]}")
+        # Verify the product is gone
+        deleted_product = await Products.select(criteria={"id": temp_product.id}, first=True)
+        if deleted_product is None:
+            print(f"Successfully deleted the product")
+        else:
+            print(f"Failed to delete the product")
+            
     except Exception as e:
-        print(f"Error during product operations: {e}\n")
-
-    # Example 11: Demonstrate all() method with relationships
-    print("\n=== Example 11: Using all() method with relationships ===")
+        print(f"Error during product operations: {e}")
+        
+    # Example 13: Demonstrate all() method with relationships
+    print("\n=== Example 13: Using all() method with relationships ===")
     try:
         # Get all products with relationships included
-        all_products = await Products.all(include_relationships=True)
+        all_products = await Products.select(criteria={}, include_relationships=True, all=True)
         
         print(f"All products with their shopping cart references:")
         for product in all_products:
@@ -262,43 +375,88 @@ async def main():
     except Exception as e:
         print(f"Error retrieving all products: {e}\n")
 
-    # Example 12: Demonstrate first() method
-    print("\n=== Example 12: Using first() method ===")
+    # Example 14: Demonstrate first() method
+    print("\n=== Example 14: Using first() method ===")
     try:
-        # Get the first user record
-        first_user = await Users.first()
+        # Get the first user in the database
+        first_user = await Users.select(criteria={}, first=True)
         print(f"First user in database: {first_user.username}")
         
-        # Get the first user with relationships
-        first_user_with_relations = await Users.first(include_relationships=True)
-        cart_count = len(first_user_with_relations.shoppingcarts) if hasattr(first_user_with_relations, 'shoppingcarts') else 0
-        print(f"First user {first_user_with_relations.username} has {cart_count} items in their cart")
+        # Get with relationships
+        first_user_with_relations = await Users.select(criteria={}, first=True, include_relationships=True)
+        print(f"First user {first_user.username} has {len(first_user_with_relations.shoppingcarts)} items in their cart")
     except Exception as e:
-        print(f"Error retrieving first user: {e}\n")
-
-    # Example 13: Demonstrate limit() method with ordering
-    print("\n=== Example 13: Using limit() with ordering ===")
+        print(f"Error demonstrating first: {e}")
+        
+    # Example 15: Demonstrate limit() method with ordering
+    print("\n=== Example 15: Using limit() with ordering ===")
     try:
-        # Create some additional users with timestamps to demonstrate ordering
+        # Create some users with different timestamps
         for i in range(3):
             await Users.insert({
-                "username": f"ordered_user_{i}",
+                "username": f"ordered_user_{dt.now().strftime('%Y%m%d%H%M%S')}_{i}",
                 "email": f"ordered{i}@example.com"
             })
-            
-        # Get the 5 most recently created users (order by created_at in descending order)
-        recent_users = await Users.limit(5, order_by="-created_at")
-        print(f"5 most recent users (newest first):")
+        
+        print("5 most recent users:")
+        recent_users = await Users.select(
+            criteria={},
+            all=True,
+            order_by="-created_at",
+            limit=5
+        )
+        
         for user in recent_users:
-            print(f"  - {user.username} (created at {user.created_at})")
+            print(f"  - {user.username} (created: {user.created_at})")
             
-        # Get the 3 oldest users (order by created_at in ascending order)
-        oldest_users = await Users.limit(3, order_by="created_at")
-        print(f"\n3 oldest users:")
+        print("\n3 oldest users:")
+        oldest_users = await Users.select(
+            criteria={},
+            all=True,
+            order_by="created_at",
+            limit=3
+        )
+        
         for user in oldest_users:
-            print(f"  - {user.username} (created at {user.created_at})")
+            print(f"  - {user.username} (created: {user.created_at})")
     except Exception as e:
-        print(f"Error demonstrating ordering: {e}\n")
+        print(f"Error demonstrating ordering: {e}")
+        
+    # Example 16: Test to_dict with different max_depth values
+    print("\n=== Example 16: Test to_dict with different max_depth values ===")
+    try:
+        # Get a shopping cart item with relationships included
+        # When include_relationships=True, relationships are eagerly loaded
+        cart_item = await ShoppingCart.first(include_relationships=True)
+        
+        if cart_item:
+            # Test with different max_depth values
+            print("Default max_depth (4):")
+            default_dict = cart_item.to_dict()
+            print(f"  - Cart item ID: {default_dict.get('id')}")
+            print(f"  - User username: {default_dict.get('user', {}).get('username')}")
+            print(f"  - Product name: {default_dict.get('product', {}).get('name')}")
+            
+            print("\nmax_depth=1:")
+            depth1_dict = cart_item.to_dict(max_depth=1)
+            print(f"  - Cart item ID: {depth1_dict.get('id')}")
+            print(f"  - User present: {'Yes' if 'user' in depth1_dict else 'No'}")
+            print(f"  - User has data: {'Yes' if depth1_dict.get('user') != {} else 'No'}")
+            
+            print("\nmax_depth=0:")
+            depth0_dict = cart_item.to_dict(max_depth=0)
+            print(f"  - Cart item ID: {depth0_dict.get('id')}")
+            print(f"  - User present: {'Yes' if 'user' in depth0_dict else 'No'}")
+            
+            print("\nInclude relationships=False:")
+            no_rel_dict = cart_item.to_dict(include_relationships=False)
+            print(f"  - Cart item ID: {no_rel_dict.get('id')}")
+            print(f"  - User present: {'Yes' if 'user' in no_rel_dict else 'No'}")
+        else:
+            print("No cart items found to test.")
+        
+    except Exception as e:
+        print(f"Error testing to_dict: {e}\n")
 
 if __name__ == "__main__":
     asyncio.run(main())

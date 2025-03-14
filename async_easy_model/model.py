@@ -1052,10 +1052,37 @@ class EasyModel(SQLModel):
             
             if all:
                 # Return all results
-                return result.scalars().all()
+                instances = result.scalars().all()
+                
+                # Materialize relationships if requested - this ensures they're fully loaded
+                if include_relationships:
+                    for instance in instances:
+                        # For each relationship, access it once to ensure it's loaded
+                        for rel_name in cls._get_auto_relationship_fields():
+                            try:
+                                # This will force loading the relationship while session is active
+                                _ = getattr(instance, rel_name)
+                            except Exception:
+                                # Skip if the relationship can't be loaded
+                                pass
+                
+                return instances
             else:
                 # Return only the first result
-                return result.scalars().first()
+                instance = result.scalars().first()
+                
+                # Materialize relationships if requested and instance exists
+                if include_relationships and instance:
+                    # For each relationship, access it once to ensure it's loaded
+                    for rel_name in cls._get_auto_relationship_fields():
+                        try:
+                            # This will force loading the relationship while session is active
+                            _ = getattr(instance, rel_name)
+                        except Exception:
+                            # Skip if the relationship can't be loaded
+                            pass
+                            
+                return instance
 
     @classmethod
     async def get_or_create(cls: Type[T], search_criteria: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Tuple[T, bool]:

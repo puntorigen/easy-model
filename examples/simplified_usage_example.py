@@ -314,6 +314,17 @@ async def main():
         # Get jane's reference
         jane = await Users.select({"username": "jane_doe"})
         print(f"Jane's direct object with select:",jane.to_dict())
+        try:
+            if hasattr(jane, 'shoppingcarts'):
+                cart_count = len(jane.shoppingcarts) if jane.shoppingcarts else 0
+                print(f"We can access related field data directly: jane.shoppingcarts has {cart_count} items")
+                if cart_count > 0:
+                    first_item = jane.shoppingcarts[0]
+                    print(f"  First item: quantity={first_item.quantity}, product_id={first_item.product_id}")
+            else:
+                print(f"The shoppingcarts attribute is not available on the jane object")
+        except Exception as e:
+            print(f"Error accessing shoppingcarts: {e}")
         
         # Get all cart items for jane with relationships included
         jane_cart = await ShoppingCart.select({"user_id": jane.id}, all=True, include_relationships=True)

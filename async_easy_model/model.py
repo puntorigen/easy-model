@@ -411,6 +411,13 @@ class EasyModel(SQLModel):
                         # Process relationships first
                         processed_item = await cls._process_relationships_for_insert(session, item)
                         
+                        # Extract special _related_* fields for post-processing
+                        related_fields = {}
+                        for key in list(processed_item.keys()):
+                            if key.startswith("_related_"):
+                                rel_name = key[9:]  # Remove "_related_" prefix
+                                related_fields[rel_name] = processed_item.pop(key)
+                        
                         # Check if a record with unique constraints already exists
                         unique_fields = cls._get_unique_fields()
                         existing_obj = None
@@ -433,12 +440,33 @@ class EasyModel(SQLModel):
                             for key, value in processed_item.items():
                                 if key != 'id':  # Don't update ID
                                     setattr(existing_obj, key, value)
-                            objects.append(existing_obj)
+                            obj = existing_obj
                         else:
                             # Create new object
                             obj = cls(**processed_item)
                             session.add(obj)
-                            objects.append(obj)
+                            
+                        # Flush to get the ID for this object
+                        await session.flush()
+                        
+                        # Now handle any one-to-many relationships
+                        for rel_name, related_objects in related_fields.items():
+                            # Check if the relationship attribute exists in the class (not the instance)
+                            if hasattr(cls, rel_name):
+                                # Get the relationship attribute from the class
+                                rel_attr = getattr(cls, rel_name)
+                                
+                                # Check if it's a SQLAlchemy relationship
+                                if hasattr(rel_attr, 'property') and hasattr(rel_attr.property, 'back_populates'):
+                                    back_attr = rel_attr.property.back_populates
+                                    
+                                    # For each related object, set the back reference to this object
+                                    for related_obj in related_objects:
+                                        setattr(related_obj, back_attr, obj)
+                                        # Make sure the related object is in the session
+                                        session.add(related_obj)
+                        
+                        objects.append(obj)
                     except Exception as e:
                         logging.error(f"Error inserting record: {e}")
                         await session.rollback()
@@ -464,6 +492,13 @@ class EasyModel(SQLModel):
                 try:
                     # Process relationships first
                     processed_data = await cls._process_relationships_for_insert(session, data)
+                    
+                    # Extract special _related_* fields for post-processing
+                    related_fields = {}
+                    for key in list(processed_data.keys()):
+                        if key.startswith("_related_"):
+                            rel_name = key[9:]  # Remove "_related_" prefix
+                            related_fields[rel_name] = processed_data.pop(key)
                     
                     # Check if a record with unique constraints already exists
                     unique_fields = cls._get_unique_fields()
@@ -494,6 +529,24 @@ class EasyModel(SQLModel):
                         session.add(obj)
                     
                     await session.flush()  # Flush to get the ID
+                    
+                    # Now handle any one-to-many relationships
+                    for rel_name, related_objects in related_fields.items():
+                        # Check if the relationship attribute exists in the class (not the instance)
+                        if hasattr(cls, rel_name):
+                            # Get the relationship attribute from the class
+                            rel_attr = getattr(cls, rel_name)
+                            
+                            # Check if it's a SQLAlchemy relationship
+                            if hasattr(rel_attr, 'property') and hasattr(rel_attr.property, 'back_populates'):
+                                back_attr = rel_attr.property.back_populates
+                                
+                                # For each related object, set the back reference to this object
+                                for related_obj in related_objects:
+                                    setattr(related_obj, back_attr, obj)
+                                    # Make sure the related object is in the session
+                                    session.add(related_obj)
+                    
                     await session.commit()
                     
                     if include_relationships:
@@ -510,60 +563,6 @@ class EasyModel(SQLModel):
                     logging.error(f"Error inserting record: {e}")
                     await session.rollback()
                     raise
-    
-    @classmethod
-    async def insert_with_related(
-        cls: Type[T], 
-        data: Dict[str, Any],
-        related_data: Dict[str, List[Dict[str, Any]]] = None
-    ) -> T:
-        """
-        Create a model instance with related objects in a single transaction.
-        
-        Args:
-            data: Dictionary of field values for the main model
-            related_data: Dictionary mapping relationship names to lists of data dictionaries
-                          for creating related objects
-                          
-        Returns:
-            The created model instance with relationships loaded
-        """
-        if related_data is None:
-            related_data = {}
-            
-        async with cls.get_session() as session:
-            # Create the main object
-            obj = cls(**data)
-            session.add(obj)
-            await session.flush()  # Flush to get the ID
-            
-            # Create related objects
-            for rel_name, items_data in related_data.items():
-                if not hasattr(cls, rel_name):
-                    continue
-                    
-                rel_attr = getattr(cls, rel_name)
-                if not hasattr(rel_attr, "property"):
-                    continue
-                    
-                # Get the related model class and the back reference attribute
-                related_model = rel_attr.property.mapper.class_
-                back_populates = getattr(rel_attr.property, "back_populates", None)
-                
-                # Create each related object
-                for item_data in items_data:
-                    # Set the back reference if it exists
-                    if back_populates:
-                        item_data[back_populates] = obj
-                        
-                    related_obj = related_model(**item_data)
-                    session.add(related_obj)
-            
-            await session.commit()
-            
-            # Refresh with relationships
-            await session.refresh(obj, attribute_names=list(related_data.keys()))
-            return obj
 
     @classmethod
     def _get_unique_fields(cls) -> List[str]:
@@ -589,6 +588,15 @@ class EasyModel(SQLModel):
             "user": {"username": "john", "email": "john@example.com"},
             "product": {"name": "Product X", "price": 19.99},
             "quantity": 2
+        })
+        
+        It also handles lists of related objects for one-to-many relationships:
+        publisher = await Publisher.insert({
+            "name": "Example Publisher",
+            "authors": [
+                {"name": "Author 1", "email": "author1@example.com"},
+                {"name": "Author 2", "email": "author2@example.com"}
+            ]
         })
         
         For each nested object:
@@ -620,8 +628,8 @@ class EasyModel(SQLModel):
         
         # Handle nested relationship objects
         for key, value in data.items():
-            # Skip if the value is not a dictionary
-            if not isinstance(value, dict):
+            # Skip if None
+            if value is None:
                 continue
                 
             # Check if this is a relationship field (either by name or derived from foreign key)
@@ -675,105 +683,164 @@ class EasyModel(SQLModel):
                     logging.warning(f"Could not find related model for {key} in {cls.__name__}")
                     continue
                 
-                # Look for unique fields in the related model to use for searching
-                unique_fields = []
-                for field_name, field_info in related_model.__fields__.items():
-                    if (hasattr(field_info, "field_info") and 
-                        field_info.field_info.extra.get('unique', False)):
-                        unique_fields.append(field_name)
-                
-                # Create a search dictionary using unique fields
-                search_dict = {}
-                for field in unique_fields:
-                    if field in value and value[field] is not None:
-                        search_dict[field] = value[field]
-                
-                # If no unique fields found but ID is provided, use it
-                if not search_dict and 'id' in value and value['id']:
-                    search_dict = {'id': value['id']}
-                
-                # Special case for products without uniqueness constraints
-                if not search_dict and related_model.__tablename__ == 'products' and 'name' in value:
-                    search_dict = {'name': value['name']}
-                
-                # Try to find an existing record
-                related_obj = None
-                if search_dict:
-                    logging.info(f"Searching for existing {related_model.__name__} with {search_dict}")
+                # Check if the value is a list (one-to-many) or dict (one-to-one)
+                if isinstance(value, list):
+                    # Handle one-to-many relationship (list of dictionaries)
+                    related_objects = []
                     
-                    try:
-                        # Create a more appropriate search query based on unique fields
-                        existing_stmt = select(related_model)
-                        for field, field_value in search_dict.items():
-                            existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
-                        
-                        existing_result = await session.execute(existing_stmt)
-                        related_obj = existing_result.scalars().first()
-                        
+                    for item in value:
+                        if not isinstance(item, dict):
+                            logging.warning(f"Skipping non-dict item in list for {key}")
+                            continue
+                            
+                        related_obj = await cls._process_single_relationship_item(
+                            session, related_model, item
+                        )
                         if related_obj:
-                            logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id}")
-                    except Exception as e:
-                        logging.error(f"Error finding existing record: {e}")
-                
-                if related_obj:
-                    # Update the existing record with any non-unique field values
-                    for attr, attr_val in value.items():
-                        # Skip ID field
-                        if attr == 'id':
-                            continue
-                            
-                        # Skip unique fields with different values to avoid constraint violations
-                        if attr in unique_fields and getattr(related_obj, attr) != attr_val:
-                            continue
-                            
-                        # Update non-unique fields
-                        current_val = getattr(related_obj, attr, None)
-                        if current_val != attr_val:
-                            setattr(related_obj, attr, attr_val)
+                            related_objects.append(related_obj)
                     
-                    # Add the updated object to the session
-                    session.add(related_obj)
-                    logging.info(f"Reusing existing {related_model.__name__} with ID: {related_obj.id}")
-                else:
-                    # Create a new record
-                    logging.info(f"Creating new {related_model.__name__} for {key}")
-                    related_obj = related_model(**value)
-                    session.add(related_obj)
-                
-                # Ensure the object has an ID by flushing
-                try:
-                    await session.flush()
-                except Exception as e:
-                    logging.error(f"Error flushing session for {related_model.__name__}: {e}")
+                    # For one-to-many, we need to keep a list of related objects to be attached later
+                    # We'll store them in a special field that will be removed before creating the model
+                    result[f"_related_{key}"] = related_objects
                     
-                    # If there was a uniqueness error, try again to find the existing record
-                    if "UNIQUE constraint failed" in str(e):
-                        logging.info(f"UNIQUE constraint failed, trying to find existing record again")
-                        
-                        # Try to find by any field provided in the search_dict
-                        existing_stmt = select(related_model)
-                        for field, field_value in search_dict.items():
-                            existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
-                        
-                        # Execute the search query
-                        existing_result = await session.execute(existing_stmt)
-                        related_obj = existing_result.scalars().first()
-                        
-                        if not related_obj:
-                            # We couldn't find an existing record, re-raise the exception
-                            raise
-                        
-                        logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id} after constraint error")
+                    # Remove the original field from the result
+                    if key in result:
+                        del result[key]
                 
-                # Update the result with the foreign key ID
-                foreign_key_name = f"{key}_id"
-                result[foreign_key_name] = related_obj.id
-                
-                # Remove the relationship dictionary from the result
-                if key in result:
-                    del result[key]
+                elif isinstance(value, dict):
+                    # Handle one-to-one relationship (single dictionary)
+                    related_obj = await cls._process_single_relationship_item(
+                        session, related_model, value
+                    )
+                    
+                    if related_obj:
+                        # Update the result with the foreign key ID
+                        foreign_key_name = f"{key}_id"
+                        result[foreign_key_name] = related_obj.id
+                        
+                        # Remove the relationship dictionary from the result
+                        if key in result:
+                            del result[key]
         
         return result
+    
+    @classmethod
+    async def _process_single_relationship_item(cls, session: AsyncSession, related_model: Type, item_data: Dict[str, Any]) -> Optional[Any]:
+        """
+        Process a single relationship item (dictionary).
+        
+        This helper method is used by _process_relationships_for_insert to handle
+        both singular relationship objects and items within lists of relationships.
+        
+        Args:
+            session: The database session to use
+            related_model: The related model class
+            item_data: Dictionary with field values for the related object
+            
+        Returns:
+            The created or found related object, or None if processing failed
+        """
+        # Look for unique fields in the related model to use for searching
+        unique_fields = []
+        for field_name, field_info in related_model.__fields__.items():
+            if (hasattr(field_info, "field_info") and 
+                field_info.field_info.extra.get('unique', False)):
+                unique_fields.append(field_name)
+        
+        # Create a search dictionary using unique fields
+        search_dict = {}
+        for field in unique_fields:
+            if field in item_data and item_data[field] is not None:
+                search_dict[field] = item_data[field]
+        
+        # If no unique fields found but ID is provided, use it
+        if not search_dict and 'id' in item_data and item_data['id']:
+            search_dict = {'id': item_data['id']}
+        
+        # Special case for products without uniqueness constraints
+        if not search_dict and related_model.__tablename__ == 'products' and 'name' in item_data:
+            search_dict = {'name': item_data['name']}
+        
+        # Try to find an existing record
+        related_obj = None
+        if search_dict:
+            logging.info(f"Searching for existing {related_model.__name__} with {search_dict}")
+            
+            try:
+                # Create a more appropriate search query based on unique fields
+                existing_stmt = select(related_model)
+                for field, field_value in search_dict.items():
+                    existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
+                
+                existing_result = await session.execute(existing_stmt)
+                related_obj = existing_result.scalars().first()
+                
+                if related_obj:
+                    logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id}")
+            except Exception as e:
+                logging.error(f"Error finding existing record: {e}")
+        
+        if related_obj:
+            # Update the existing record with any non-unique field values
+            for attr, attr_val in item_data.items():
+                # Skip ID field
+                if attr == 'id':
+                    continue
+                    
+                # Skip unique fields with different values to avoid constraint violations
+                if attr in unique_fields and getattr(related_obj, attr) != attr_val:
+                    continue
+                    
+                # Update non-unique fields
+                current_val = getattr(related_obj, attr, None)
+                if current_val != attr_val:
+                    setattr(related_obj, attr, attr_val)
+            
+            # Add the updated object to the session
+            session.add(related_obj)
+            logging.info(f"Reusing existing {related_model.__name__} with ID: {related_obj.id}")
+        else:
+            # Create a new record
+            logging.info(f"Creating new {related_model.__name__}")
+            
+            # Process nested relationships in this item first
+            if hasattr(related_model, '_process_relationships_for_insert'):
+                # This is a recursive call to process nested relationships
+                processed_item_data = await related_model._process_relationships_for_insert(
+                    session, item_data
+                )
+            else:
+                processed_item_data = item_data
+            
+            related_obj = related_model(**processed_item_data)
+            session.add(related_obj)
+        
+        # Ensure the object has an ID by flushing
+        try:
+            await session.flush()
+        except Exception as e:
+            logging.error(f"Error flushing session for {related_model.__name__}: {e}")
+            
+            # If there was a uniqueness error, try again to find the existing record
+            if "UNIQUE constraint failed" in str(e):
+                logging.info(f"UNIQUE constraint failed, trying to find existing record again")
+                
+                # Try to find by any field provided in the search_dict
+                existing_stmt = select(related_model)
+                for field, field_value in search_dict.items():
+                    existing_stmt = existing_stmt.where(getattr(related_model, field) == field_value)
+                
+                # Execute the search query
+                existing_result = await session.execute(existing_stmt)
+                related_obj = existing_result.scalars().first()
+                
+                if not related_obj:
+                    # We couldn't find an existing record, re-raise the exception
+                    raise
+                
+                logging.info(f"Found existing {related_model.__name__} with ID: {related_obj.id} after constraint error")
+        
+        return related_obj
 
     @classmethod
     async def update(cls: Type[T], data: Dict[str, Any], criteria: Dict[str, Any], include_relationships: bool = True) -> Optional[T]:
@@ -997,7 +1064,7 @@ class EasyModel(SQLModel):
         Retrieve record(s) by matching attribute values.
         
         Args:
-            criteria: Dictionary of field values to filter by (field=value)
+            criteria: Dictionary of search criteria
             all: If True, return all matching records, otherwise return only the first one
             first: If True, return only the first record (equivalent to all=False)
             include_relationships: If True, eagerly load all relationships
@@ -1109,6 +1176,37 @@ class EasyModel(SQLModel):
         
         new_record = await cls.insert(data)
         return new_record, True
+
+    @classmethod
+    async def insert_with_related(
+        cls: Type[T], 
+        data: Dict[str, Any],
+        related_data: Dict[str, List[Dict[str, Any]]] = None
+    ) -> T:
+        """
+        Create a model instance with related objects in a single transaction.
+        
+        Args:
+            data: Dictionary of field values for the main model
+            related_data: Dictionary mapping relationship names to lists of data dictionaries
+                          for creating related objects
+                          
+        Returns:
+            The created model instance with relationships loaded
+        """
+        if related_data is None:
+            related_data = {}
+            
+        # Create a copy of data for modification
+        insert_data = data.copy()
+        
+        # Add relationship fields to the data
+        for rel_name, items_data in related_data.items():
+            if items_data:
+                insert_data[rel_name] = items_data
+        
+        # Use the enhanced insert method to handle all relationships
+        return await cls.insert(insert_data, include_relationships=True)
 
 # Register an event listener to update 'updated_at' on instance modifications.
 @event.listens_for(Session, "before_flush")

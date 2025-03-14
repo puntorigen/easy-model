@@ -131,7 +131,6 @@ class User(EasyModel, table=True):
 ```python
 from async_easy_model import EasyModel, Field
 from typing import Optional
-from datetime import datetime
 
 class Product(EasyModel, table=True):
     name: str = Field(index=True)
@@ -147,24 +146,32 @@ class Product(EasyModel, table=True):
 ### Create (Insert)
 
 ```python
-# Insert a single record
+# Create a model with nested relationships
 user = await User.insert({
-    "username": "john_doe",
-    "email": "john@example.com"
+    "username": "new_user",
+    "email": "new@example.com",
+    "posts": [  # Create related posts in the same transaction
+        {
+            "title": "My First Post", 
+            "content": "Post content",
+            "comments": [  # Nested relationships can be multiple levels deep
+                {"text": "Great post!", "user": {"username": "commenter1"}}
+            ]
+        },
+        {"title": "My Second Post", "content": "More content"}
+    ],
+    "profile": {  # One-to-one relationship
+        "bio": "Python developer",
+        "avatar_url": "https://example.com/avatar.jpg"
+    }
 })
 
-# Insert multiple records
-users = await User.insert([
-    {"username": "user1", "email": "user1@example.com"},
-    {"username": "user2", "email": "user2@example.com"}
-])
-
-# Insert with relationships using nested dictionaries
-post = await Post.insert({
-    "title": "My First Post",
-    "content": "Hello world!",
-    "author": {"username": "john_doe"}  # Will automatically link to existing user
-})
+# Access all the nested relationship data immediately
+print(f"User: {user.username}")
+print(f"Profile bio: {user.profile.bio}")
+print(f"First post: {user.posts[0].title}")
+print(f"First comment on first post: {user.posts[0].comments[0].text}")
+print(f"Comment author: {user.posts[0].comments[0].user.username}")
 ```
 
 ### Read (Retrieve)
@@ -180,23 +187,23 @@ users = await User.select({"is_active": True}, all=True)
 first_user = await User.select({"is_active": True}, first=True)
 
 # Select all records
-all_users = await User.select({}, all=True)
+all_users = await User.select(all=True)
 
 # Select with wildcard pattern matching
 gmail_users = await User.select({"email": "*@gmail.com"}, all=True)
 
 # Select with ordering
-recent_users = await User.select({}, order_by="-created_at", all=True)
+recent_users = await User.select(order_by="-created_at", all=True)
 
 # Select with limit
-latest_posts = await Post.select({}, order_by="-created_at", limit=5)
+latest_posts = await Post.select(order_by="-created_at", limit=5)
 # Note: limit > 1 automatically sets all=True
 
 # Select with multiple ordering fields
-sorted_users = await User.select({}, order_by=["last_name", "first_name"], all=True)
+sorted_users = await User.select(order_by=["last_name", "first_name"], all=True)
 
 # Select with relationship ordering
-posts_by_author = await Post.select({}, order_by="author.username", all=True)
+posts_by_author = await Post.select(order_by="author.username", all=True)
 
 # Select with relationship criteria
 admin_posts = await Post.select({"author": {"role": "admin"}}, all=True)
@@ -304,14 +311,32 @@ user = await User.get_with_related(1, ["posts", "comments"])
 You can create models with relationships in a single operation:
 
 ```python
-# Create a user with related posts
+# Create a model with nested relationships
 user = await User.insert({
-    "username": "another_user",
-    "email": "another@example.com",
-    "posts": [
-        {"title": "My Post", "content": "Post content"}
-    ]
+    "username": "new_user",
+    "email": "new@example.com",
+    "posts": [  # Create related posts in the same transaction
+        {
+            "title": "My First Post", 
+            "content": "Post content",
+            "comments": [  # Nested relationships can be multiple levels deep
+                {"text": "Great post!", "user": {"username": "commenter1"}}
+            ]
+        },
+        {"title": "My Second Post", "content": "More content"}
+    ],
+    "profile": {  # One-to-one relationship
+        "bio": "Python developer",
+        "avatar_url": "https://example.com/avatar.jpg"
+    }
 })
+
+# Access all the nested relationship data immediately
+print(f"User: {user.username}")
+print(f"Profile bio: {user.profile.bio}")
+print(f"First post: {user.posts[0].title}")
+print(f"First comment on first post: {user.posts[0].comments[0].text}")
+print(f"Comment author: {user.posts[0].comments[0].user.username}")
 ```
 
 ### Converting to Dictionary with Relationships
@@ -378,16 +403,11 @@ department = await Department.insert({"name": "Engineering"})
 employee = await Employee.insert({"name": "John Doe", "department_id": department.id})
 
 # Access the to-one relationship
-await employee.load_related("department")
 print(f"{employee.name} works in the {employee.department.name} department")
 
 # Access the to-many relationship
-await department.load_related("employees")
 print(f"The {department.name} department has {len(department.employees)} employees")
 
-# Or using select with include_relationships=True (default)
-department = await Department.select({"id": department.id})
-print(f"Department employees: {[emp.name for emp in department.employees]}")
 ```
 
 ### Foreign Key Naming Conventions
@@ -715,7 +735,7 @@ class Comment(EasyModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id")
 
 async def main():
-    # Initialize database and create tables
+    # Initialize database
     await init_db()
     
     # Create user

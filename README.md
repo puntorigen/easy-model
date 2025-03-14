@@ -116,12 +116,36 @@ users = await User.insert([
     {"username": "user2", "email": "user2@example.com"}
 ])
 
-# Insert with relationships using nested dictionaries
-post = await Post.insert({
-    "title": "My First Post",
-    "content": "Hello world!",
-    "user": {"username": "john_doe"}  # Will automatically link to existing user
+# Insert with nested relationships
+new_post = await Post.insert({
+    "title": "My Post",
+    "content": "Content here",
+    "user": {"username": "jane_doe"},  # Will automatically link to existing user
+    "comments": [  # Create multiple comments in a single transaction
+        {"text": "Great post!", "user": {"username": "reader1"}},
+        {"text": "Thanks for sharing", "user": {"username": "reader2"}}
+    ]
 })
+# Access nested data without requerying
+print(f"Post by {new_post.user.username} with {len(new_post.comments)} comments")
+
+# Insert with nested one-to-many relationships 
+publisher = await Publisher.insert({
+    "name": "Example Publisher",
+    "books": [  # List of nested objects
+        {
+            "title": "Python Mastery",
+            "genres": [
+                {"name": "Programming"},
+                {"name": "Education"}
+            ]
+        },
+        {"title": "Data Science Handbook"}
+    ]
+})
+# Access nested relationships immediately
+print(f"Publisher: {publisher.name} with {len(publisher.books)} books")
+print(f"First book genres: {[g.name for g in publisher.books[0].genres]}")
 ```
 
 ### Read (Retrieve)
@@ -227,22 +251,28 @@ Using the models defined earlier, here's how to work with relationships:
 
 ```python
 # Load all relationships automatically
-post = await Post.select({"id": 1}, include_relationships=True)
+post = await Post.select({"id": 1})
 print(post.user.username)  # Access related objects directly
 
 # Load specific relationships
 post = await Post.get_with_related(1, ["user", "comments"])
 
 # Load relationships after fetching
-post = await Post.select({"id": 1})
+post = await Post.select({"id": 1}, include_relationships=False)
 await post.load_related(["user", "comments"])
 
-# Insert with related objects in a single transaction
-new_post = await Post.insert_with_related({
+# Insert with nested relationships
+new_post = await Post.insert({
     "title": "My Post",
     "content": "Content here",
-    "user": {"username": "john_doe"}
+    "user": {"username": "jane_doe"},  # Will automatically link to existing user
+    "comments": [  # Create multiple comments in a single transaction
+        {"text": "Great post!", "user": {"username": "reader1"}},
+        {"text": "Thanks for sharing", "user": {"username": "reader2"}}
+    ]
 })
+# Access nested data without requerying
+print(f"Post by {new_post.user.username} with {len(new_post.comments)} comments")
 
 # Convert to dictionary with nested relationships
 post_dict = post.to_dict(include_relationships=True, max_depth=2)

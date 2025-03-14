@@ -22,7 +22,19 @@ _auto_processed_models = set()
 _auto_relationships_processed = False
 
 # Flag to enable/disable automatic relationship detection
+# Disabled by default and will be enabled during init_db
 _auto_relationships_enabled = False
+
+# Automatically disable auto-relationships at module import time
+# This ensures models can be defined without immediate processing
+def _disable_auto_relationships_on_import():
+    # This will be automatically called when the module is imported
+    global _auto_relationships_enabled
+    _auto_relationships_enabled = False
+    logger.info("Auto relationships disabled by default at import")
+
+# Call the function immediately when this module is imported
+_disable_auto_relationships_on_import()
 
 def pluralize_name(name: str) -> str:
     """Convert a singular noun to its plural form."""

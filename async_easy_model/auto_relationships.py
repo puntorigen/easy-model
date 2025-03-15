@@ -178,7 +178,8 @@ def setup_relationship_on_class(
     relationship_name: str, 
     target_cls: Type[SQLModel], 
     back_populates: str,
-    is_list: bool = False
+    is_list: bool = False,
+    through_model: Optional[Type[SQLModel]] = None
 ) -> None:
     """
     Properly set up a relationship on a SQLModel class that will be recognized by SQLModel.
@@ -197,6 +198,9 @@ def setup_relationship_on_class(
     rel_args = {
         'back_populates': back_populates
     }
+    
+    if through_model:
+        rel_args['secondary'] = through_model.__tablename__
     
     # Create the SQLAlchemy relationship
     rel_prop = sa_relationship(
@@ -339,18 +343,26 @@ def process_all_models_for_relationships():
     This function:
     1. Looks for foreign keys in all registered models
     2. Sets up relationships automatically based on those foreign keys
+    3. Detects junction tables and sets up many-to-many relationships
     """
     logger.info(f"Processing relationships for all registered models: {list(_model_registry.keys())}")
     
     # First, gather all foreign keys for all models
     foreign_keys_map = {}
+    junction_models = []
+    
     for model_name, model_cls in _model_registry.items():
         logger.info(f"Processing model: {model_name}")
         foreign_keys = get_foreign_keys_from_model(model_cls)
         if foreign_keys:
             foreign_keys_map[model_name] = (model_cls, foreign_keys)
             
-    # Next, set up relationships using those foreign keys
+            # Check if this model represents a junction table
+            if is_junction_table(model_cls):
+                logger.info(f"Detected junction table: {model_name}")
+                junction_models.append(model_cls)
+            
+    # Next, set up direct relationships using those foreign keys
     for model_name, (model_cls, foreign_keys) in foreign_keys_map.items():
         for field_name, target_fk in foreign_keys.items():
             # Parse target table and field
@@ -365,6 +377,11 @@ def process_all_models_for_relationships():
                 setup_relationship_between_models(model_cls, target_model, field_name)
             else:
                 logger.warning(f"Target model not found for {target_table}")
+    
+    # Finally, set up many-to-many relationships
+    for junction_model in junction_models:
+        logger.info(f"Processing junction table for many-to-many relationships: {junction_model.__name__}")
+        setup_many_to_many_relationships(junction_model)
     
     logger.info("Finished processing relationships")
 
@@ -542,3 +559,116 @@ def setup_auto_relationships_for_model(model_cls):
                 logger.error(f"Error setting up relationship: {e}")
         else:
             logger.warning(f"Target model not found for {target_table}")
+
+def is_junction_table(model_cls: Type[SQLModel]) -> bool:
+    """
+    Determine if a model represents a junction table (many-to-many relationship).
+    
+    A junction table typically has:
+    - Only foreign key fields (plus perhaps id, created_at, etc.)
+    - Exactly two foreign keys pointing to different tables
+    
+    Args:
+        model_cls: The model class to check
+        
+    Returns:
+        True if the model appears to be a junction table, False otherwise
+    """
+    foreign_keys = get_foreign_keys_from_model(model_cls)
+    
+    # A junction table should have at least two foreign keys
+    if len(foreign_keys) < 2:
+        return False
+    
+    # Get the tables referenced by the foreign keys
+    referenced_tables = set()
+    for field_name, target_fk in foreign_keys.items():
+        target_table = get_related_model_name_from_foreign_key(target_fk)
+        referenced_tables.add(target_table)
+    
+    # A true junction table should reference at least two different tables
+    # (some junction tables might have multiple FKs to the same table)
+    if len(referenced_tables) < 2:
+        return False
+    
+    # Check if all non-standard fields are foreign keys
+    standard_fields = {'id', 'created_at', 'updated_at'}
+    model_fields = set(getattr(model_cls, '__fields__', {}).keys())
+    non_standard_fields = model_fields - standard_fields
+    foreign_key_fields = set(foreign_keys.keys())
+    
+    # Allow for a few extra fields beyond the foreign keys
+    # Some junction tables might have additional metadata
+    non_fk_fields = non_standard_fields - foreign_key_fields
+    return len(non_fk_fields) <= 2  # Allow for up to 2 additional fields
+
+def setup_many_to_many_relationships(junction_model: Type[SQLModel]) -> None:
+    """
+    Set up many-to-many relationships using a junction table.
+    
+    This creates relationships between the two entities connected by the junction table.
+    For example, if we have Book, Tag, and BookTag, this would set up:
+    - Book.tags -> List[Tag]
+    - Tag.books -> List[Book]
+    
+    Args:
+        junction_model: The junction model class (e.g., BookTag)
+    """
+    logger.info(f"Setting up many-to-many relationships for junction table: {junction_model.__name__}")
+    
+    # Get the foreign keys from the junction model
+    foreign_keys = get_foreign_keys_from_model(junction_model)
+    if len(foreign_keys) < 2:
+        logger.warning(f"Junction table {junction_model.__name__} has fewer than 2 foreign keys")
+        return
+    
+    # Get the models referenced by the foreign keys
+    referenced_models = []
+    for field_name, target_fk in foreign_keys.items():
+        target_table = get_related_model_name_from_foreign_key(target_fk)
+        target_model = get_model_by_table_name(target_table)
+        if target_model:
+            referenced_models.append((field_name, target_model))
+        else:
+            logger.warning(f"Could not find model for table {target_table}")
+    
+    # We need at least two different models for a many-to-many relationship
+    if len(referenced_models) < 2:
+        logger.warning(f"Junction table {junction_model.__name__} references fewer than 2 valid models")
+        return
+    
+    # For each pair of models, set up the many-to-many relationship
+    # For simplicity, we'll just use the first two models found
+    model_a_field, model_a = referenced_models[0]
+    model_b_field, model_b = referenced_models[1]
+    
+    # Determine relationship names
+    # For model_a -> model_b relationship (e.g., Book.tags)
+    model_a_to_b_name = pluralize_name(model_b.__tablename__)
+    
+    # For model_b -> model_a relationship (e.g., Tag.books)
+    model_b_to_a_name = pluralize_name(model_a.__tablename__)
+    
+    logger.info(f"Setting up many-to-many: {model_a.__name__}.{model_a_to_b_name} <-> {model_b.__name__}.{model_b_to_a_name}")
+    
+    # Set up relationship from model_a to model_b (e.g., Book.tags)
+    setup_relationship_on_class(
+        model_cls=model_a,
+        relationship_name=model_a_to_b_name,
+        target_cls=model_b,
+        back_populates=model_b_to_a_name,
+        is_list=True,
+        through_model=junction_model
+    )
+    
+    # Set up relationship from model_b to model_a (e.g., Tag.books)
+    setup_relationship_on_class(
+        model_cls=model_b,
+        relationship_name=model_b_to_a_name,
+        target_cls=model_a,
+        back_populates=model_a_to_b_name,
+        is_list=True,
+        through_model=junction_model
+    )
+    
+    logger.info(f"Successfully set up many-to-many relationships for {junction_model.__name__}")

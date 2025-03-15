@@ -10,6 +10,7 @@ from datetime import datetime, timezone as tz
 import inspect
 import json
 import logging
+import re
 
 T = TypeVar("T", bound="EasyModel")
 
@@ -301,6 +302,20 @@ class EasyModel(SQLModel):
                 return await session.get(cls, id)
 
     @classmethod
+    def _get_unique_fields(cls) -> List[str]:
+        """
+        Get all fields with unique=True constraint
+        
+        Returns:
+            List of field names that have unique constraints
+        """
+        unique_fields = []
+        for name, field in cls.__fields__.items():
+            if name != 'id' and hasattr(field, "field_info") and field.field_info.extra.get('unique', False):
+                unique_fields.append(name)
+        return unique_fields
+
+    @classmethod
     async def get_by_attribute(
         cls: Type[T], 
         all: bool = False, 
@@ -376,199 +391,64 @@ class EasyModel(SQLModel):
         Returns:
             The created model instance(s)
         """
-        # Handle list of records
+        if not data:
+            return None
+            
+        # Handle single dict or list of dicts
         if isinstance(data, list):
-            objects = []
-            async with cls.get_session() as session:
-                for item in data:
-                    try:
-                        # Process relationships first
-                        processed_item = await cls._process_relationships_for_insert(session, item)
-                        
-                        # Extract special _related_* fields for post-processing
-                        related_fields = {}
-                        for key in list(processed_item.keys()):
-                            if key.startswith("_related_"):
-                                rel_name = key[9:]  # Remove "_related_" prefix
-                                related_fields[rel_name] = processed_item.pop(key)
-                        
-                        # Check if a record with unique constraints already exists
-                        unique_fields = cls._get_unique_fields()
-                        existing_obj = None
-                        
-                        if unique_fields:
-                            unique_criteria = {field: processed_item[field] 
-                                              for field in unique_fields 
-                                              if field in processed_item}
-                            
-                            if unique_criteria:
-                                # Try to find existing record with these unique values
-                                statement = select(cls)
-                                for field, value in unique_criteria.items():
-                                    statement = statement.where(getattr(cls, field) == value)
-                                result = await session.execute(statement)
-                                existing_obj = result.scalars().first()
-                        
-                        if existing_obj:
-                            # Update existing object with new values
-                            for key, value in processed_item.items():
-                                if key != 'id':  # Don't update ID
-                                    setattr(existing_obj, key, value)
-                            obj = existing_obj
-                        else:
-                            # Create new object
-                            obj = cls(**processed_item)
-                            session.add(obj)
-                            
-                        # Flush to get the ID for this object
-                        await session.flush()
-                        
-                        # Now handle any one-to-many relationships
-                        for rel_name, related_objects in related_fields.items():
-                            # Check if the relationship attribute exists in the class (not the instance)
-                            if hasattr(cls, rel_name):
-                                # Get the relationship attribute from the class
-                                rel_attr = getattr(cls, rel_name)
-                                
-                                # Check if it's a SQLAlchemy relationship
-                                if hasattr(rel_attr, 'property') and hasattr(rel_attr.property, 'back_populates'):
-                                    back_attr = rel_attr.property.back_populates
-                                    
-                                    # For each related object, set the back reference to this object
-                                    for related_obj in related_objects:
-                                        setattr(related_obj, back_attr, obj)
-                                        # Make sure the related object is in the session
-                                        session.add(related_obj)
-                        
-                        objects.append(obj)
-                    except Exception as e:
-                        logging.error(f"Error inserting record: {e}")
-                        await session.rollback()
-                        raise
-                
-                try:
-                    await session.flush()
-                    await session.commit()
-                    
-                    # Refresh with relationships if requested
-                    if include_relationships:
-                        # Create a fresh session to load all relationships recursively
-                        async with cls.get_session() as fresh_session:
-                            loaded_objects = []
-                            for obj in objects:
-                                loaded_obj = await fresh_session.get(cls, obj.id)
-                                if loaded_obj:
-                                    # Recursively load all relationships
-                                    loaded_obj = await cls._load_relationships_recursively(
-                                        fresh_session, loaded_obj, max_depth
-                                    )
-                                    loaded_objects.append(loaded_obj)
-                            return loaded_objects
-                    else:
-                        return objects
-                except Exception as e:
-                    logging.error(f"Error committing transaction: {e}")
-                    await session.rollback()
-                    raise
-                        
-                return objects
-        else:
-            # Single record case
-            async with cls.get_session() as session:
-                try:
-                    # Process relationships first
-                    processed_data = await cls._process_relationships_for_insert(session, data)
-                    
-                    # Extract special _related_* fields for post-processing
-                    related_fields = {}
-                    for key in list(processed_data.keys()):
-                        if key.startswith("_related_"):
-                            rel_name = key[9:]  # Remove "_related_" prefix
-                            related_fields[rel_name] = processed_data.pop(key)
-                    
-                    # Check if a record with unique constraints already exists
-                    unique_fields = cls._get_unique_fields()
-                    existing_obj = None
-                    
-                    if unique_fields:
-                        unique_criteria = {field: processed_data[field] 
-                                          for field in unique_fields 
-                                          if field in processed_data}
-                        
-                        if unique_criteria:
-                            # Try to find existing record with these unique values
-                            statement = select(cls)
-                            for field, value in unique_criteria.items():
-                                statement = statement.where(getattr(cls, field) == value)
-                            result = await session.execute(statement)
-                            existing_obj = result.scalars().first()
-                    
-                    if existing_obj:
-                        # Update existing object with new values
-                        for key, value in processed_data.items():
-                            if key != 'id':  # Don't update ID
-                                setattr(existing_obj, key, value)
-                        obj = existing_obj
-                    else:
-                        # Create new object
-                        obj = cls(**processed_data)
-                        session.add(obj)
-                        
-                    # Flush to get the ID for this object
-                    await session.flush()
-                    
-                    # Now handle any one-to-many relationships
-                    for rel_name, related_objects in related_fields.items():
-                        # Check if the relationship attribute exists in the class (not the instance)
-                        if hasattr(cls, rel_name):
-                            # Get the relationship attribute from the class
-                            rel_attr = getattr(cls, rel_name)
-                            
-                            # Check if it's a SQLAlchemy relationship
-                            if hasattr(rel_attr, 'property') and hasattr(rel_attr.property, 'back_populates'):
-                                back_attr = rel_attr.property.back_populates
-                                
-                                # For each related object, set the back reference to this object
-                                for related_obj in related_objects:
-                                    setattr(related_obj, back_attr, obj)
-                                    # Make sure the related object is in the session
-                                    session.add(related_obj)
-                    
-                    await session.flush()
-                    await session.commit()
-                    
-                    # Refresh with relationships if requested
-                    if include_relationships:
-                        # Create a fresh session to load all relationships recursively
-                        async with cls.get_session() as fresh_session:
-                            loaded_obj = await fresh_session.get(cls, obj.id)
-                            if loaded_obj:
-                                # Recursively load all relationships
-                                loaded_obj = await cls._load_relationships_recursively(
-                                    fresh_session, loaded_obj, max_depth
-                                )
-                                return loaded_obj
-                            return obj
-                    else:
-                        return obj
-                except Exception as e:
-                    logging.error(f"Error inserting record: {e}")
-                    await session.rollback()
-                    raise
-
-    @classmethod
-    def _get_unique_fields(cls) -> List[str]:
-        """
-        Get all fields with unique=True constraint
+            results = []
+            for item in data:
+                result = await cls.insert(item, include_relationships, max_depth)
+                results.append(result)
+            return results
         
-        Returns:
-            List of field names that have unique constraints
-        """
-        unique_fields = []
-        for name, field in cls.__fields__.items():
-            if name != 'id' and hasattr(field, "field_info") and field.field_info.extra.get('unique', False):
-                unique_fields.append(name)
-        return unique_fields
+        # Store many-to-many relationship data for later processing
+        many_to_many_data = {}
+        many_to_many_rels = cls._get_many_to_many_relationships()
+        
+        # Extract many-to-many data before processing other relationships
+        for rel_name in many_to_many_rels:
+            if rel_name in data:
+                many_to_many_data[rel_name] = data[rel_name]
+        
+        # Process relationships to convert nested objects to foreign keys
+        async with cls.get_session() as session:
+            try:
+                processed_data = await cls._process_relationships_for_insert(session, data)
+                
+                # Create the model instance
+                obj = cls(**processed_data)
+                session.add(obj)
+                
+                # Flush to get the object ID
+                await session.flush()
+                
+                # Now process many-to-many relationships if any
+                for rel_name, rel_data in many_to_many_data.items():
+                    if isinstance(rel_data, list):
+                        await cls._process_many_to_many_relationship(
+                            session, obj, rel_name, rel_data
+                        )
+                
+                # Commit the transaction
+                await session.commit()
+                
+                if include_relationships:
+                    # Reload with relationships
+                    return await cls._load_relationships_recursively(session, obj, max_depth)
+                else:
+                    return obj
+                    
+            except Exception as e:
+                await session.rollback()
+                logging.error(f"Error inserting {cls.__name__}: {e}")
+                if "UNIQUE constraint failed" in str(e):
+                    field_match = re.search(r"UNIQUE constraint failed: \w+\.(\w+)", str(e))
+                    if field_match:
+                        field_name = field_match.group(1)
+                        value = data.get(field_name)
+                        raise ValueError(f"A record with {field_name}='{value}' already exists")
+                raise
 
     @classmethod
     async def _process_relationships_for_insert(cls: Type[T], session: AsyncSession, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -605,97 +485,65 @@ class EasyModel(SQLModel):
         Returns:
             Processed data dictionary with nested objects replaced by their foreign key IDs
         """
-        import copy
-        result = copy.deepcopy(data)
+        if not data:
+            return {}
+            
+        result = dict(data)
         
-        # Get all relationship fields for this model
+        # Get relationship fields for this model
         relationship_fields = cls._get_auto_relationship_fields()
         
-        # Get foreign key fields
-        foreign_key_fields = []
-        for field_name, field_info in cls.__fields__.items():
-            if field_name.endswith("_id") and hasattr(field_info, "field_info"):
-                if field_info.field_info.extra.get("foreign_key"):
-                    foreign_key_fields.append(field_name)
+        # Get many-to-many relationships separately
+        many_to_many_relationships = cls._get_many_to_many_relationships()
         
-        # Handle nested relationship objects
-        for key, value in data.items():
-            # Skip if None
+        # Set of field names already processed as many-to-many relationships
+        processed_m2m_fields = set()
+            
+        # Process each relationship field in the input data
+        for key in list(result.keys()):
+            value = result[key]
+            
+            # Skip empty values
             if value is None:
                 continue
-                
-            # Check if this is a relationship field (either by name or derived from foreign key)
-            is_rel_field = key in relationship_fields
-            related_key = f"{key}_id"
-            is_derived_rel = related_key in foreign_key_fields
             
-            # If it's a relationship field or derived from a foreign key
-            if is_rel_field or is_derived_rel or related_key in cls.__fields__:
-                # Find the related model class
+            # Check if this is a relationship field
+            if key in relationship_fields:
+                # Get the related model class
                 related_model = None
                 
-                # Try to get the related model from the attribute
-                if hasattr(cls, key) and hasattr(getattr(cls, key), 'property'):
-                    # Get from relationship attribute
+                if hasattr(cls, key):
                     rel_attr = getattr(cls, key)
-                    related_model = rel_attr.property.mapper.class_
-                else:
-                    # Try to find it from foreign key definition
-                    fk_definition = None
-                    for field_name, field_info in cls.__fields__.items():
-                        if field_name == related_key and hasattr(field_info, "field_info"):
-                            fk_definition = field_info.field_info.extra.get("foreign_key")
-                            break
-                    
-                    if fk_definition:
-                        # Parse foreign key definition (e.g. "users.id")
-                        target_table, _ = fk_definition.split(".")
-                        # Try to find the target model
-                        from async_easy_model.auto_relationships import get_model_by_table_name, singularize_name
-                        related_model = get_model_by_table_name(target_table)
-                        if not related_model:
-                            # Try with the singular form
-                            singular_table = singularize_name(target_table)
-                            related_model = get_model_by_table_name(singular_table)
-                    else:
-                        # Try to infer from field name (e.g., "user_id" -> Users)
-                        base_name = related_key[:-3]  # Remove "_id"
-                        from async_easy_model.auto_relationships import get_model_by_table_name, singularize_name, pluralize_name
-                        
-                        # Try singular and plural forms
-                        related_model = get_model_by_table_name(base_name)
-                        if not related_model:
-                            plural_table = pluralize_name(base_name)
-                            related_model = get_model_by_table_name(plural_table)
-                        if not related_model:
-                            singular_table = singularize_name(base_name)
-                            related_model = get_model_by_table_name(singular_table)
+                    if hasattr(rel_attr, 'prop') and hasattr(rel_attr.prop, 'mapper'):
+                        related_model = rel_attr.prop.mapper.class_
                 
                 if not related_model:
-                    logging.warning(f"Could not find related model for {key} in {cls.__name__}")
+                    logging.warning(f"Could not determine related model for {key}, skipping")
                     continue
                 
-                # Check if the value is a list (one-to-many) or dict (one-to-one)
+                # Check if this is a many-to-many relationship field
+                if key in many_to_many_relationships:
+                    # Store this separately - we'll handle it after the main object is created
+                    processed_m2m_fields.add(key)
+                    continue
+                
+                # Handle different relationship types based on data type
                 if isinstance(value, list):
                     # Handle one-to-many relationship (list of dictionaries)
-                    related_objects = []
-                    
+                    related_ids = []
                     for item in value:
-                        if not isinstance(item, dict):
-                            logging.warning(f"Skipping non-dict item in list for {key}")
-                            continue
-                            
-                        related_obj = await cls._process_single_relationship_item(
-                            session, related_model, item
-                        )
-                        if related_obj:
-                            related_objects.append(related_obj)
+                        if isinstance(item, dict):
+                            related_obj = await cls._process_single_relationship_item(
+                                session, related_model, item
+                            )
+                            if related_obj:
+                                related_ids.append(related_obj.id)
                     
-                    # For one-to-many, we need to keep a list of related objects to be attached later
-                    # We'll store them in a special field that will be removed before creating the model
-                    result[f"_related_{key}"] = related_objects
+                    # Update result with list of foreign key IDs
+                    foreign_key_list_name = f"{key}_ids"
+                    result[foreign_key_list_name] = related_ids
                     
-                    # Remove the original field from the result
+                    # Remove the relationship list from the result
                     if key in result:
                         del result[key]
                 
@@ -714,8 +562,14 @@ class EasyModel(SQLModel):
                         if key in result:
                             del result[key]
         
+        # Remove any processed many-to-many fields from the result
+        # since we'll handle them separately after the object is created
+        for key in processed_m2m_fields:
+            if key in result:
+                del result[key]
+        
         return result
-    
+
     @classmethod
     async def _process_single_relationship_item(cls, session: AsyncSession, related_model: Type, item_data: Dict[str, Any]) -> Optional[Any]:
         """
@@ -847,6 +701,17 @@ class EasyModel(SQLModel):
         Returns:
             The updated model instance
         """
+        # Store many-to-many relationship data for later processing
+        many_to_many_data = {}
+        many_to_many_rels = cls._get_many_to_many_relationships()
+        
+        # Extract many-to-many data before processing
+        for rel_name in many_to_many_rels:
+            if rel_name in data:
+                many_to_many_data[rel_name] = data[rel_name]
+                # Remove from original data
+                del data[rel_name]
+        
         async with cls.get_session() as session:
             try:
                 # Find the record(s) to update
@@ -887,6 +752,74 @@ class EasyModel(SQLModel):
                 for key, value in data.items():
                     setattr(record, key, value)
                 
+                # Process many-to-many relationships if any
+                for rel_name, rel_data in many_to_many_data.items():
+                    if isinstance(rel_data, list):
+                        # First, get all existing links for this relation
+                        junction_model, target_model = many_to_many_rels[rel_name]
+                        
+                        from async_easy_model.auto_relationships import get_foreign_keys_from_model
+                        foreign_keys = get_foreign_keys_from_model(junction_model)
+                        
+                        # Find the foreign key fields for this model and the target model
+                        this_model_fk = None
+                        target_model_fk = None
+                        
+                        for fk_field, fk_target in foreign_keys.items():
+                            target_table = fk_target.split('.')[0]
+                            if target_table == cls.__tablename__:
+                                this_model_fk = fk_field
+                            elif target_table == target_model.__tablename__:
+                                target_model_fk = fk_field
+                        
+                        if not this_model_fk or not target_model_fk:
+                            logging.warning(f"Could not find foreign key fields for {rel_name} relationship")
+                            continue
+                            
+                        # Get all existing junctions for this record
+                        junction_stmt = select(junction_model).where(
+                            getattr(junction_model, this_model_fk) == record.id
+                        )
+                        junction_result = await session.execute(junction_stmt)
+                        existing_junctions = junction_result.scalars().all()
+                        
+                        # Get the target IDs from the existing junctions
+                        existing_target_ids = [getattr(junction, target_model_fk) for junction in existing_junctions]
+                        
+                        # Track processed target IDs
+                        processed_target_ids = set()
+                        
+                        # Process each item in rel_data
+                        for item_data in rel_data:
+                            target_obj = await cls._process_single_relationship_item(
+                                session, target_model, item_data
+                            )
+                            
+                            if not target_obj:
+                                logging.warning(f"Failed to process {target_model.__name__} item for {rel_name}")
+                                continue
+                                
+                            processed_target_ids.add(target_obj.id)
+                            
+                            # Check if this link already exists
+                            if target_obj.id not in existing_target_ids:
+                                # Create new junction
+                                junction_data = {
+                                    this_model_fk: record.id,
+                                    target_model_fk: target_obj.id
+                                }
+                                junction_obj = junction_model(**junction_data)
+                                session.add(junction_obj)
+                                logging.info(f"Created junction between {cls.__name__} {record.id} and {target_model.__name__} {target_obj.id}")
+                        
+                        # Delete junctions for target IDs that weren't in the updated data
+                        junctions_to_delete = [j for j in existing_junctions 
+                                              if getattr(j, target_model_fk) not in processed_target_ids]
+                        
+                        for junction in junctions_to_delete:
+                            await session.delete(junction)
+                            logging.info(f"Deleted junction between {cls.__name__} {record.id} and {target_model.__name__} {getattr(junction, target_model_fk)}")
+                
                 await session.flush()
                 await session.commit()
                 
@@ -900,9 +833,10 @@ class EasyModel(SQLModel):
                 else:
                     await session.refresh(record)
                     return record
+                    
             except Exception as e:
-                logging.error(f"Error updating record: {e}")
                 await session.rollback()
+                logging.error(f"Error updating {cls.__name__}: {e}")
                 raise
 
     @classmethod
@@ -918,7 +852,7 @@ class EasyModel(SQLModel):
         """
         async with cls.get_session() as session:
             try:
-                # Find the record(s) to delete
+                # Find records to delete
                 statement = select(cls)
                 for field, value in criteria.items():
                     if isinstance(value, str) and '*' in value:
@@ -935,43 +869,50 @@ class EasyModel(SQLModel):
                     logging.warning(f"No records found with criteria: {criteria}")
                     return 0
                 
-                # Get a list of related tables that might need to be cleared first
-                # This helps with foreign key constraints
-                relationship_fields = cls._get_auto_relationship_fields()
-                to_many_relationships = []
+                # Check if there are many-to-many relationships that need cleanup
+                many_to_many_rels = cls._get_many_to_many_relationships()
                 
-                # Find to-many relationships that need to be handled first
-                for rel_name in relationship_fields:
-                    rel_attr = getattr(cls, rel_name, None)
-                    if rel_attr and hasattr(rel_attr, 'property'):
-                        # Check if this is a to-many relationship (one-to-many or many-to-many)
-                        if hasattr(rel_attr.property, 'uselist') and rel_attr.property.uselist:
-                            to_many_relationships.append(rel_name)
-                
-                # For each record, delete related records first (cascade delete)
+                # Delete each record and its related many-to-many junction records
+                count = 0
                 for record in records:
-                    # First load all related collections
-                    if to_many_relationships:
-                        await session.refresh(record, attribute_names=to_many_relationships)
-                    
-                    # Delete related records in collections
-                    for rel_name in to_many_relationships:
-                        related_collection = getattr(record, rel_name, [])
-                        if related_collection:
-                            for related_item in related_collection:
-                                await session.delete(related_item)
+                    # Clean up many-to-many junctions first
+                    for rel_name, (junction_model, _) in many_to_many_rels.items():
+                        # Get foreign keys from the junction model
+                        from async_easy_model.auto_relationships import get_foreign_keys_from_model
+                        foreign_keys = get_foreign_keys_from_model(junction_model)
+                        
+                        # Find which foreign key refers to this model
+                        this_model_fk = None
+                        for fk_field, fk_target in foreign_keys.items():
+                            target_table = fk_target.split('.')[0]
+                            if target_table == cls.__tablename__:
+                                this_model_fk = fk_field
+                                break
+                        
+                        if not this_model_fk:
+                            continue
+                            
+                        # Delete junction records for this record
+                        delete_stmt = select(junction_model).where(
+                            getattr(junction_model, this_model_fk) == record.id
+                        )
+                        junction_result = await session.execute(delete_stmt)
+                        junctions = junction_result.scalars().all()
+                        
+                        for junction in junctions:
+                            await session.delete(junction)
+                            logging.info(f"Deleted junction record for {cls.__name__} id={record.id}")
                     
                     # Now delete the main record
                     await session.delete(record)
+                    count += 1
                 
-                # Commit the changes
-                await session.flush()
                 await session.commit()
+                return count
                 
-                return len(records)
             except Exception as e:
-                logging.error(f"Error deleting records: {e}")
                 await session.rollback()
+                logging.error(f"Error deleting {cls.__name__}: {e}")
                 raise
 
     def to_dict(self, include_relationships: bool = True, max_depth: int = 4) -> Dict[str, Any]:
@@ -1226,6 +1167,115 @@ class EasyModel(SQLModel):
         
         # Use the enhanced insert method to handle all relationships
         return await cls.insert(insert_data, include_relationships=True)
+
+    @classmethod
+    def _get_many_to_many_relationships(cls) -> Dict[str, Tuple[Type['EasyModel'], Type['EasyModel']]]:
+        """
+        Get all many-to-many relationships for this model.
+        
+        Returns:
+            Dictionary mapping relationship field names to tuples of (junction_model, target_model)
+        """
+        from async_easy_model.auto_relationships import get_model_by_table_name
+        
+        many_to_many_relationships = {}
+        
+        # Check if this is a class attribute rather than an instance attribute
+        relationship_fields = cls._get_auto_relationship_fields()
+        
+        for rel_name in relationship_fields:
+            if not hasattr(cls, rel_name):
+                continue
+                
+            rel_attr = getattr(cls, rel_name)
+            
+            # Check if this is a many-to-many relationship by looking for secondary table
+            if hasattr(rel_attr, 'prop') and hasattr(rel_attr.prop, 'secondary'):
+                secondary = rel_attr.prop.secondary
+                if isinstance(secondary, str):  # For string table names (our implementation)
+                    junction_model = get_model_by_table_name(secondary)
+                    if junction_model:
+                        target_model = rel_attr.prop.mapper.class_
+                        many_to_many_relationships[rel_name] = (junction_model, target_model)
+                        
+        return many_to_many_relationships
+        
+    @classmethod
+    async def _process_many_to_many_relationship(
+        cls, 
+        session: AsyncSession, 
+        parent_obj: 'EasyModel',
+        rel_name: str, 
+        items: List[Dict[str, Any]]
+    ) -> None:
+        """
+        Process a many-to-many relationship for an object.
+        
+        Args:
+            session: The database session
+            parent_obj: The parent object (e.g., Book)
+            rel_name: The name of the relationship (e.g., 'tags')
+            items: List of data dictionaries for the related items
+            
+        Returns:
+            None
+        """
+        # Get information about this many-to-many relationship
+        many_to_many_rels = cls._get_many_to_many_relationships()
+        if rel_name not in many_to_many_rels:
+            logging.warning(f"Relationship {rel_name} is not a many-to-many relationship")
+            return
+            
+        junction_model, target_model = many_to_many_rels[rel_name]
+        
+        # Get the foreign key fields from the junction model that reference this model and the target model
+        from async_easy_model.auto_relationships import get_foreign_keys_from_model
+        foreign_keys = get_foreign_keys_from_model(junction_model)
+        
+        # Find the foreign key fields for this model and the target model
+        this_model_fk = None
+        target_model_fk = None
+        
+        for fk_field, fk_target in foreign_keys.items():
+            target_table = fk_target.split('.')[0]
+            if target_table == cls.__tablename__:
+                this_model_fk = fk_field
+            elif target_table == target_model.__tablename__:
+                target_model_fk = fk_field
+        
+        if not this_model_fk or not target_model_fk:
+            logging.warning(f"Could not find foreign key fields for {rel_name} relationship")
+            return
+        
+        # Process each related item
+        for item_data in items:
+            # First, create or find the target model instance
+            target_obj = await cls._process_single_relationship_item(
+                session, target_model, item_data
+            )
+            
+            if not target_obj:
+                logging.warning(f"Failed to process {target_model.__name__} item for {rel_name}")
+                continue
+            
+            # Now create a junction record linking the parent to the target
+            # Check if this link already exists
+            junction_stmt = select(junction_model).where(
+                getattr(junction_model, this_model_fk) == parent_obj.id,
+                getattr(junction_model, target_model_fk) == target_obj.id
+            )
+            junction_result = await session.execute(junction_stmt)
+            existing_junction = junction_result.scalars().first()
+            
+            if not existing_junction:
+                # Create new junction
+                junction_data = {
+                    this_model_fk: parent_obj.id,
+                    target_model_fk: target_obj.id
+                }
+                junction_obj = junction_model(**junction_data)
+                session.add(junction_obj)
+                logging.info(f"Created junction between {cls.__name__} {parent_obj.id} and {target_model.__name__} {target_obj.id}")
 
     @classmethod
     async def _load_relationships_recursively(cls, session, obj, max_depth=2, current_depth=0, visited_ids=None):

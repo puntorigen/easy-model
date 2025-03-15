@@ -11,7 +11,7 @@ from async_easy_model import EasyModel, Field, db_config, init_db
 logging.basicConfig(level=logging.INFO)
 
 # Configure database 
-db_file = "tutorial_example.db"
+db_file = "tutorial_example10.db"
 # Remove existing database file if it exists to start fresh
 if os.path.exists(db_file):
     os.remove(db_file)
@@ -58,15 +58,15 @@ async def create_book():
             "name": "Jane Smith",
             "bio": "Python expert and educator"
         },
-        "booktags": [  # Create BookTag join records with nested tags
+        "tags": [  # Create BookTag join records with nested tags
             {
-                "tag": {"name": "Programming"}
+                "name": "Programming"
             },
             {
-                "tag": {"name": "Python"}
+                "name": "Python"
             },
             {
-                "tag": {"name": "Async"}
+                "name": "Async"
             }
         ],
         "reviews": [  # Create reviews with nested users
@@ -98,7 +98,7 @@ async def create_book():
         print(f"Review {i+1}: {review.rating}/5 stars by {review.user.username}")
     
     # Print tag names - now we can access the nested tag objects directly
-    tags = [booktag.tag.name for booktag in book.booktags]
+    tags = [tag.name for tag in book.tags]
     print(f"Tags: {', '.join(tags)}")
     
     return book
@@ -114,9 +114,7 @@ async def find_python_books_with_good_reviews():
     # Find all books that have this tag through the BookTag join table
     # This will automatically load the nested relationship chain (book -> reviews -> user)
     python_books = []
-    for booktag in python_tag.booktags:
-        book = booktag.book
-        
+    for book in python_tag.books:
         # Check if this book has any good reviews (rating >= 4)
         has_good_reviews = any(review.rating >= 4 for review in book.reviews)
         

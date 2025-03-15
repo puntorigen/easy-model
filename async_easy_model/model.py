@@ -212,8 +212,9 @@ class EasyModel(SQLModel):
     @classmethod
     async def all(
         cls: Type[T], 
-        include_relationships: bool = True,
-        order_by: Optional[Union[str, List[str]]] = None
+        include_relationships: bool = True, 
+        order_by: Optional[Union[str, List[str]]] = None,
+        max_depth: int = 2
     ) -> List[T]:
         """
         Retrieve all records of this model.
@@ -222,29 +223,20 @@ class EasyModel(SQLModel):
             include_relationships: If True, eagerly load all relationships
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
+            max_depth: Maximum depth for loading nested relationships
             
         Returns:
             A list of all model instances
         """
-        async with cls.get_session() as session:
-            statement = select(cls)
-            
-            # Apply ordering
-            statement = cls._apply_order_by(statement, order_by)
-            
-            if include_relationships:
-                # Get all relationship attributes, including auto-detected ones
-                for rel_name in cls._get_auto_relationship_fields():
-                    statement = statement.options(selectinload(getattr(cls, rel_name)))
-                    
-            result = await session.execute(statement)
-            return result.scalars().all()
+        return await cls.select({}, all=True, include_relationships=include_relationships, 
+                               order_by=order_by, max_depth=max_depth)
     
     @classmethod
     async def first(
         cls: Type[T], 
-        include_relationships: bool = True,
-        order_by: Optional[Union[str, List[str]]] = None
+        include_relationships: bool = True, 
+        order_by: Optional[Union[str, List[str]]] = None,
+        max_depth: int = 2
     ) -> Optional[T]:
         """
         Retrieve the first record of this model.
@@ -253,56 +245,37 @@ class EasyModel(SQLModel):
             include_relationships: If True, eagerly load all relationships
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
+            max_depth: Maximum depth for loading nested relationships
             
         Returns:
             The first model instance or None if no records exist
         """
-        async with cls.get_session() as session:
-            statement = select(cls)
-            
-            # Apply ordering
-            statement = cls._apply_order_by(statement, order_by)
-            
-            if include_relationships:
-                # Get all relationship attributes, including auto-detected ones
-                for rel_name in cls._get_auto_relationship_fields():
-                    statement = statement.options(selectinload(getattr(cls, rel_name)))
-                    
-            result = await session.execute(statement)
-            return result.scalars().first()
+        return await cls.select({}, first=True, include_relationships=include_relationships, 
+                               order_by=order_by, max_depth=max_depth)
     
     @classmethod
     async def limit(
         cls: Type[T], 
         count: int, 
-        include_relationships: bool = True,
-        order_by: Optional[Union[str, List[str]]] = None
+        include_relationships: bool = True, 
+        order_by: Optional[Union[str, List[str]]] = None,
+        max_depth: int = 2
     ) -> List[T]:
         """
-        Retrieve a limited number of records of this model.
+        Retrieve a limited number of records.
         
         Args:
-            count: Maximum number of records to retrieve
+            count: Maximum number of records to return
             include_relationships: If True, eagerly load all relationships
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
+            max_depth: Maximum depth for loading nested relationships
             
         Returns:
-            A list of model instances up to the specified count
+            A list of model instances
         """
-        async with cls.get_session() as session:
-            statement = select(cls).limit(count)
-            
-            # Apply ordering
-            statement = cls._apply_order_by(statement, order_by)
-            
-            if include_relationships:
-                # Get all relationship attributes, including auto-detected ones
-                for rel_name in cls._get_auto_relationship_fields():
-                    statement = statement.options(selectinload(getattr(cls, rel_name)))
-                    
-            result = await session.execute(statement)
-            return result.scalars().all()
+        return await cls.select({}, all=True, include_relationships=include_relationships, 
+                               order_by=order_by, limit=count, max_depth=max_depth)
 
     @classmethod
     async def get_by_id(cls: Type[T], id: int, include_relationships: bool = True) -> Optional[T]:
@@ -391,13 +364,14 @@ class EasyModel(SQLModel):
             return result.scalars().first()
 
     @classmethod
-    async def insert(cls: Type[T], data: Union[Dict[str, Any], List[Dict[str, Any]]], include_relationships: bool = True) -> Union[T, List[T]]:
+    async def insert(cls: Type[T], data: Union[Dict[str, Any], List[Dict[str, Any]]], include_relationships: bool = True, max_depth: int = 2) -> Union[T, List[T]]:
         """
         Insert one or more records.
         
         Args:
             data: Dictionary of field values or a list of dictionaries for multiple records
             include_relationships: If True, return the instance(s) with relationships loaded
+            max_depth: Maximum depth for loading nested relationships
             
         Returns:
             The created model instance(s)
@@ -478,8 +452,20 @@ class EasyModel(SQLModel):
                     
                     # Refresh with relationships if requested
                     if include_relationships:
-                        for obj in objects:
-                            await session.refresh(obj)
+                        # Create a fresh session to load all relationships recursively
+                        async with cls.get_session() as fresh_session:
+                            loaded_objects = []
+                            for obj in objects:
+                                loaded_obj = await fresh_session.get(cls, obj.id)
+                                if loaded_obj:
+                                    # Recursively load all relationships
+                                    loaded_obj = await cls._load_relationships_recursively(
+                                        fresh_session, loaded_obj, max_depth
+                                    )
+                                    loaded_objects.append(loaded_obj)
+                            return loaded_objects
+                    else:
+                        return objects
                 except Exception as e:
                     logging.error(f"Error committing transaction: {e}")
                     await session.rollback()
@@ -527,8 +513,9 @@ class EasyModel(SQLModel):
                         # Create new object
                         obj = cls(**processed_data)
                         session.add(obj)
-                    
-                    await session.flush()  # Flush to get the ID
+                        
+                    # Flush to get the ID for this object
+                    await session.flush()
                     
                     # Now handle any one-to-many relationships
                     for rel_name, related_objects in related_fields.items():
@@ -547,17 +534,22 @@ class EasyModel(SQLModel):
                                     # Make sure the related object is in the session
                                     session.add(related_obj)
                     
+                    await session.flush()
                     await session.commit()
                     
+                    # Refresh with relationships if requested
                     if include_relationships:
-                        # Refresh with relationships
-                        statement = select(cls).where(cls.id == obj.id)
-                        for rel_name in cls._get_auto_relationship_fields():
-                            statement = statement.options(selectinload(getattr(cls, rel_name)))
-                        result = await session.execute(statement)
-                        return result.scalars().first()
+                        # Create a fresh session to load all relationships recursively
+                        async with cls.get_session() as fresh_session:
+                            loaded_obj = await fresh_session.get(cls, obj.id)
+                            if loaded_obj:
+                                # Recursively load all relationships
+                                loaded_obj = await cls._load_relationships_recursively(
+                                    fresh_session, loaded_obj, max_depth
+                                )
+                                return loaded_obj
+                            return obj
                     else:
-                        await session.refresh(obj)
                         return obj
                 except Exception as e:
                     logging.error(f"Error inserting record: {e}")
@@ -574,7 +566,7 @@ class EasyModel(SQLModel):
         """
         unique_fields = []
         for name, field in cls.__fields__.items():
-            if name != 'id' and hasattr(field, 'field_info') and field.field_info.extra.get('unique', False):
+            if name != 'id' and hasattr(field, "field_info") and field.field_info.extra.get('unique', False):
                 unique_fields.append(name)
         return unique_fields
 
@@ -742,10 +734,10 @@ class EasyModel(SQLModel):
         """
         # Look for unique fields in the related model to use for searching
         unique_fields = []
-        for field_name, field_info in related_model.__fields__.items():
-            if (hasattr(field_info, "field_info") and 
-                field_info.field_info.extra.get('unique', False)):
-                unique_fields.append(field_name)
+        for name, field in related_model.__fields__.items():
+            if (hasattr(field, "field_info") and 
+                field.field_info.extra.get('unique', False)):
+                unique_fields.append(name)
         
         # Create a search dictionary using unique fields
         search_dict = {}
@@ -1058,21 +1050,23 @@ class EasyModel(SQLModel):
         first: bool = False,
         include_relationships: bool = True,
         order_by: Optional[Union[str, List[str]]] = None,
+        max_depth: int = 2,
         limit: Optional[int] = None
     ) -> Union[Optional[T], List[T]]:
         """
-        Retrieve record(s) by matching attribute values.
+        Select records based on criteria.
         
         Args:
-            criteria: Dictionary of search criteria
-            all: If True, return all matching records, otherwise return only the first one
+            criteria: Dictionary of field values to filter by
+            all: If True, return all matching records. If False, return only the first match.
             first: If True, return only the first record (equivalent to all=False)
             include_relationships: If True, eagerly load all relationships
             order_by: Field(s) to order by. Can be a string or list of strings.
                      Prefix with '-' for descending order (e.g. '-created_at')
+            max_depth: Maximum depth for loading nested relationships (when include_relationships=True)
             limit: Maximum number of records to retrieve (if all=True)
                   If limit > 1, all is automatically set to True
-                
+            
         Returns:
             A single model instance, a list of instances, or None if not found
         """
@@ -1083,73 +1077,98 @@ class EasyModel(SQLModel):
         # If limit is specified and > 1, set all to True
         if limit is not None and limit > 1:
             all = True
+            
         # If first is specified, set all to False (first takes precedence)
         if first:
             all = False
-        
+            
         async with cls.get_session() as session:
             # Build the query
             statement = select(cls)
             
-            # Apply criteria
-            for field, value in criteria.items():
+            # Apply criteria filters
+            for key, value in criteria.items():
                 if isinstance(value, str) and '*' in value:
                     # Handle LIKE queries (convert '*' wildcard to '%')
                     like_value = value.replace('*', '%')
-                    statement = statement.where(getattr(cls, field).like(like_value))
+                    statement = statement.where(getattr(cls, key).like(like_value))
                 else:
                     # Regular equality check
-                    statement = statement.where(getattr(cls, field) == value)
+                    statement = statement.where(getattr(cls, key) == value)
             
             # Apply ordering
             if order_by:
-                statement = cls._apply_order_by(statement, order_by)
+                order_clauses = []
+                if isinstance(order_by, str):
+                    order_by = [order_by]
+                
+                for field_name in order_by:
+                    if field_name.startswith("-"):
+                        # Descending order
+                        field_name = field_name[1:]  # Remove the "-" prefix
+                        # Handle relationship field ordering with dot notation
+                        if "." in field_name:
+                            rel_name, attr_name = field_name.split(".", 1)
+                            if hasattr(cls, rel_name):
+                                rel_model = getattr(cls, rel_name)
+                                if hasattr(rel_model, "property"):
+                                    target_model = rel_model.property.entity.class_
+                                    if hasattr(target_model, attr_name):
+                                        order_clauses.append(getattr(target_model, attr_name).desc())
+                        else:
+                            order_clauses.append(getattr(cls, field_name).desc())
+                    else:
+                        # Ascending order
+                        # Handle relationship field ordering with dot notation
+                        if "." in field_name:
+                            rel_name, attr_name = field_name.split(".", 1)
+                            if hasattr(cls, rel_name):
+                                rel_model = getattr(cls, rel_name)
+                                if hasattr(rel_model, "property"):
+                                    target_model = rel_model.property.entity.class_
+                                    if hasattr(target_model, attr_name):
+                                        order_clauses.append(getattr(target_model, attr_name).asc())
+                        else:
+                            order_clauses.append(getattr(cls, field_name).asc())
+                
+                if order_clauses:
+                    statement = statement.order_by(*order_clauses)
             
             # Apply limit
             if limit:
                 statement = statement.limit(limit)
             
-            # Include relationships if requested
+            # Load relationships if requested
             if include_relationships:
                 for rel_name in cls._get_auto_relationship_fields():
                     statement = statement.options(selectinload(getattr(cls, rel_name)))
             
-            # Execute the query
             result = await session.execute(statement)
             
             if all:
-                # Return all results
-                instances = result.scalars().all()
+                objects = result.scalars().all()
                 
-                # Materialize relationships if requested - this ensures they're fully loaded
-                if include_relationships:
-                    for instance in instances:
-                        # For each relationship, access it once to ensure it's loaded
-                        for rel_name in cls._get_auto_relationship_fields():
-                            try:
-                                # This will force loading the relationship while session is active
-                                _ = getattr(instance, rel_name)
-                            except Exception:
-                                # Skip if the relationship can't be loaded
-                                pass
+                # Load nested relationships if requested
+                if include_relationships and objects and max_depth > 1:
+                    loaded_objects = []
+                    for obj in objects:
+                        loaded_obj = await cls._load_relationships_recursively(
+                            session, obj, max_depth
+                        )
+                        loaded_objects.append(loaded_obj)
+                    return loaded_objects
                 
-                return instances
+                return objects
             else:
-                # Return only the first result
-                instance = result.scalars().first()
+                obj = result.scalars().first()
                 
-                # Materialize relationships if requested and instance exists
-                if include_relationships and instance:
-                    # For each relationship, access it once to ensure it's loaded
-                    for rel_name in cls._get_auto_relationship_fields():
-                        try:
-                            # This will force loading the relationship while session is active
-                            _ = getattr(instance, rel_name)
-                        except Exception:
-                            # Skip if the relationship can't be loaded
-                            pass
-                            
-                return instance
+                # Load nested relationships if requested
+                if include_relationships and obj and max_depth > 1:
+                    obj = await cls._load_relationships_recursively(
+                        session, obj, max_depth
+                    )
+                
+                return obj
 
     @classmethod
     async def get_or_create(cls: Type[T], search_criteria: Dict[str, Any], defaults: Optional[Dict[str, Any]] = None) -> Tuple[T, bool]:
@@ -1207,6 +1226,86 @@ class EasyModel(SQLModel):
         
         # Use the enhanced insert method to handle all relationships
         return await cls.insert(insert_data, include_relationships=True)
+
+    @classmethod
+    async def _load_relationships_recursively(cls, session, obj, max_depth=2, current_depth=0, visited_ids=None):
+        """
+        Recursively load all relationships for an object and its related objects.
+        
+        Args:
+            session: SQLAlchemy session
+            obj: The object to load relationships for
+            max_depth: Maximum depth to recurse to prevent infinite loops
+            current_depth: Current recursion depth (internal use)
+            visited_ids: Set of already visited object IDs to prevent cycles
+            
+        Returns:
+            The object with all relationships loaded
+        """
+        if visited_ids is None:
+            visited_ids = set()
+            
+        # Use object ID and class for tracking instead of the object itself (which isn't hashable)
+        obj_key = (obj.__class__.__name__, obj.id)
+            
+        # Stop if we've reached max depth or already visited this object
+        if current_depth >= max_depth or obj_key in visited_ids:
+            return obj
+            
+        # Mark as visited to prevent cycles
+        visited_ids.add(obj_key)
+        
+        # Load all relationship fields for this object
+        obj_class = obj.__class__
+        relationship_fields = obj_class._get_auto_relationship_fields()
+        
+        # For each relationship, load it and recurse
+        for rel_name in relationship_fields:
+            try:
+                # Fetch the objects using selectinload
+                stmt = select(obj_class).where(obj_class.id == obj.id)
+                stmt = stmt.options(selectinload(getattr(obj_class, rel_name)))
+                result = await session.execute(stmt)
+                refreshed_obj = result.scalars().first()
+                
+                # Get the loaded relationship
+                related_objs = getattr(refreshed_obj, rel_name, None)
+                
+                # Update the object's relationship
+                setattr(obj, rel_name, related_objs)
+                
+                # Skip if no related objects
+                if related_objs is None:
+                    continue
+                    
+                # Recurse for related objects
+                if isinstance(related_objs, list):
+                    for related_obj in related_objs:
+                        if hasattr(related_obj.__class__, '_get_auto_relationship_fields'):
+                            # Only recurse if the object has an ID (is persistent)
+                            if hasattr(related_obj, 'id') and related_obj.id is not None:
+                                await cls._load_relationships_recursively(
+                                    session, 
+                                    related_obj, 
+                                    max_depth, 
+                                    current_depth + 1, 
+                                    visited_ids
+                                )
+                else:
+                    if hasattr(related_objs.__class__, '_get_auto_relationship_fields'):
+                        # Only recurse if the object has an ID (is persistent)
+                        if hasattr(related_objs, 'id') and related_objs.id is not None:
+                            await cls._load_relationships_recursively(
+                                session, 
+                                related_objs, 
+                                max_depth, 
+                                current_depth + 1, 
+                                visited_ids
+                            )
+            except Exception as e:
+                logging.warning(f"Error loading relationship {rel_name}: {e}")
+                
+        return obj
 
 # Register an event listener to update 'updated_at' on instance modifications.
 @event.listens_for(Session, "before_flush")

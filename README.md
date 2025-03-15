@@ -317,7 +317,7 @@ db_config.set_connection_url("postgresql+asyncpg://user:password@localhost:5432/
 
 ## Documentation
 
-For more detailed documentation, please visit the [GitHub repository](https://github.com/puntorigen/easy_model) or refer to the [DOCS.md](https://github.com/puntorigen/easy_model/blob/main/DOCS.md) file.
+For more detailed documentation, please visit the [GitHub repository](https://github.com/puntorigen/easy-model) or refer to the [DOCS.md](https://github.com/puntorigen/easy-model/blob/master/DOCS.md) file.
 
 ## License
 

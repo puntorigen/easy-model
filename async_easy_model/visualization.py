@@ -20,12 +20,28 @@ class ModelVisualizer:
     
     Attributes:
         model_registry (Dict[str, Type[SQLModel]]): Dictionary of registered models
+        title (str): Title for the Mermaid diagram
     """
     
-    def __init__(self):
-        """Initialize the ModelVisualizer."""
+    def __init__(self, title: str = "EasyModel Table Schemas"):
+        """
+        Initialize the ModelVisualizer.
+        
+        Args:
+            title: Optional title for the Mermaid diagram
+        """
         self.model_registry = {}
+        self.title = title
         self._load_registered_models()
+    
+    def set_title(self, title: str) -> None:
+        """
+        Set or update the title for the Mermaid diagram.
+        
+        Args:
+            title: New title for the Mermaid diagram
+        """
+        self.title = title
     
     def _load_registered_models(self):
         """
@@ -330,9 +346,17 @@ class ModelVisualizer:
             String containing raw Mermaid ER diagram markup without markdown fences.
         """
         if not self.model_registry:
-            return "erDiagram\n    %% No models found. Run init_db first."
+            return f"---\ntitle: {self.title}\nconfig:\n    layout: elk\n---\nerDiagram\n    %% No models found. Run init_db first."
         
-        lines = ["erDiagram"]
+        # Start with the title section
+        lines = [
+            "---",
+            f"title: {self.title}",
+            "config:",
+            "    layout: elk",
+            "---",
+            "erDiagram"
+        ]
         
         # Keep track of rendered relationships to avoid duplicates
         rendered_relationships = set()

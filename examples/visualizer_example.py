@@ -72,26 +72,34 @@ async def main():
         await init_db(model_classes=models)
         print("Database initialized successfully")
         
-        # Create a visualizer instance
+        # Create a visualizer instance with default title
         visualizer = ModelVisualizer()
         
-        # Generate the Mermaid ER diagram
+        # Generate the Mermaid ER diagram with default title
         er_diagram = visualizer.mermaid()
         
         # Print the ER diagram markup
-        print("\nGenerated Mermaid ER Diagram:\n")
+        print("\nGenerated Mermaid ER Diagram with default title:\n")
         print(er_diagram)
-
+        
         # Get the Mermaid ER diagram link
         er_diagram_link = visualizer.mermaid_link()
         print("\nGenerated Mermaid ER Diagram Link:\n")
         print(er_diagram_link)
         
+        # Now set a custom title
+        visualizer.set_title("Library Management System Schema")
+        
+        # Generate a new diagram with the custom title
+        er_diagram_custom = visualizer.mermaid()
+        print("\nGenerated Mermaid ER Diagram with custom title:\n")
+        print(er_diagram_custom)
+        
         # Optionally, save the diagram to a file
         with open("er_diagram.md", "w") as f:
             f.write("# Database Schema ER Diagram\n\n")
             f.write("This diagram shows the database schema with tables, fields, and relationships.\n\n")
-            f.write(er_diagram)
+            f.write(er_diagram_custom)
         
         print("\nER diagram saved to er_diagram.md")
         
@@ -111,10 +119,11 @@ async def main():
         print("- Relationship cardinality is displayed using Mermaid notation:")
         print("  - ||--o{ : One-to-many")
         print("  - }o--o{ : Many-to-many")
-    
+        print("- Virtual relationship fields are shown, reflecting EasyModel's automatic relationship handling")
+        
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {str(e)}")
 
-
+# Run the async main function
 if __name__ == "__main__":
     asyncio.run(main())

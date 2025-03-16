@@ -7,7 +7,7 @@ from .model import EasyModel, init_db, db_config
 from sqlmodel import Field, Relationship as SQLModelRelationship
 
 __version__ = "0.2.4"
-__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships", "MigrationManager", "check_and_migrate_models"]
+__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships", "MigrationManager", "check_and_migrate_models", "ModelVisualizer"]
 
 # Create a more user-friendly Relationship function
 def Relationship(
@@ -44,3 +44,6 @@ from .auto_relationships import enable_auto_relationships, disable_auto_relation
 
 # Add to __init__.py
 from .migrations import MigrationManager, check_and_migrate_models
+
+# Import the visualization helper
+from .visualization import ModelVisualizer

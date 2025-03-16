@@ -76,7 +76,7 @@ async def main():
         visualizer = ModelVisualizer()
         
         # Generate the Mermaid ER diagram
-        er_diagram = visualizer.generate_mermaid_er_diagram()
+        er_diagram = visualizer.mermaid()
         
         # Print the ER diagram markup
         print("\nGenerated Mermaid ER Diagram:\n")

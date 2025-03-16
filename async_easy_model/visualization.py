@@ -425,7 +425,7 @@ class ModelVisualizer:
             
         return result
     
-    def generate_mermaid_er_diagram(self) -> str:
+    def mermaid(self) -> str:
         """
         Generate a Mermaid ER diagram for all registered models.
         
@@ -545,3 +545,6 @@ class ModelVisualizer:
         lines.append("```")
         
         return "\n".join(lines)
+    
+    # Alias for backward compatibility
+    generate_mermaid_er_diagram = mermaid

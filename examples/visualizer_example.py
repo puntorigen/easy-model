@@ -81,6 +81,11 @@ async def main():
         # Print the ER diagram markup
         print("\nGenerated Mermaid ER Diagram:\n")
         print(er_diagram)
+
+        # Get the Mermaid ER diagram link
+        er_diagram_link = visualizer.mermaid_link()
+        print("\nGenerated Mermaid ER Diagram Link:\n")
+        print(er_diagram_link)
         
         # Optionally, save the diagram to a file
         with open("er_diagram.md", "w") as f:

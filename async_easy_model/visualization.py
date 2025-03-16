@@ -321,6 +321,126 @@ class ModelVisualizer:
         
         return fields
     
+    def _generate_mermaid_content(self) -> str:
+        """
+        Generate the raw Mermaid ER diagram content without markdown code fences.
+        This is used internally by both mermaid() and mermaid_link() methods.
+        
+        Returns:
+            String containing raw Mermaid ER diagram markup without markdown fences.
+        """
+        if not self.model_registry:
+            return "erDiagram\n    %% No models found. Run init_db first."
+        
+        lines = ["erDiagram"]
+        
+        # Keep track of rendered relationships to avoid duplicates
+        rendered_relationships = set()
+        processed_models = set()
+        
+        # Try to process all models, but continue even if some fail
+        for model_name, model_class in self.model_registry.items():
+            try:
+                table_name = getattr(model_class, "__tablename__", model_name.lower())
+                processed_models.add(model_name)
+                
+                # Add entity definition
+                lines.append(f"    {table_name} {{")
+                
+                # Get fields for this model
+                fields = self._get_field_information(model_class)
+                
+                # Add fields
+                for field_name, field_info in fields.items():
+                    # Format type
+                    field_type = self._simplify_type_for_mermaid(str(field_info["type"]))
+                    
+                    # If it's a relationship, use the proper model name
+                    if field_info.get("is_virtual", False) and field_info.get("related_model"):
+                        related_model = field_info["related_model"]
+                        if field_info.get("is_list", False):
+                            # For list fields like 'tags', use the proper casing for model name
+                            field_type = f"{related_model}[]"
+                        else:
+                            # For single object reference, use the model name directly
+                            field_type = related_model
+                    
+                    # Format attributes with proper Mermaid syntax
+                    attrs_str = self._format_field_attributes(field_info)
+                    
+                    # Add field
+                    lines.append(f"        {field_type} {field_name}{attrs_str}")
+                
+                # Close entity definition
+                lines.append("    }")
+            
+            except Exception as e:
+                lines.append(f"    %% Error defining {model_name}: {str(e)}")
+        
+        # Add relationships between models
+        for model_name, model_class in self.model_registry.items():
+            try:
+                if model_name not in processed_models:
+                    continue
+                    
+                table_name = getattr(model_class, "__tablename__", model_name.lower())
+                
+                # Get fields for this model
+                fields = self._get_field_information(model_class)
+                
+                # Add relationships based on foreign keys
+                for field_name, field_info in fields.items():
+                    if field_info.get("is_foreign_key", False) and field_info.get("foreign_key_reference"):
+                        # Parse the foreign key reference to get the target table
+                        fk_ref = field_info["foreign_key_reference"]
+                        target_table = fk_ref.split(".")[0] if "." in fk_ref else fk_ref
+                        
+                        # Create relationship ID to avoid duplicates
+                        rel_id = f"{table_name}_{target_table}_{field_name}"
+                        if rel_id in rendered_relationships:
+                            continue
+                        
+                        # Add the relationship
+                        lines.append(f"    {table_name} ||--o{{ {target_table} : \"{field_name}\"")
+                        rendered_relationships.add(rel_id)
+                
+                # Add many-to-many relationships
+                # Check if this model might be a junction table
+                if len(fields) >= 3:  # id + at least 2 foreign keys
+                    foreign_key_fields = [f for f in fields.values() if f.get("is_foreign_key", False)]
+                    
+                    if len(foreign_key_fields) >= 2:
+                        # This might be a junction table, try to render special M:N relationship
+                        for i, fk1 in enumerate(foreign_key_fields):
+                            for fk2 in foreign_key_fields[i+1:]:
+                                # Skip if either field doesn't have a foreign key reference
+                                if not fk1.get("foreign_key_reference") or not fk2.get("foreign_key_reference"):
+                                    continue
+                                    
+                                # Get the target tables
+                                target1 = fk1["foreign_key_reference"].split(".")[0]
+                                target2 = fk2["foreign_key_reference"].split(".")[0]
+                                
+                                # Skip self-references or duplicates
+                                if target1 == target2:
+                                    continue
+                                    
+                                # Create relationship IDs
+                                rel_id1 = f"{target1}_{target2}_m2m"
+                                rel_id2 = f"{target2}_{target1}_m2m"
+                                
+                                if rel_id1 in rendered_relationships or rel_id2 in rendered_relationships:
+                                    continue
+                                    
+                                # Add the many-to-many relationship directly between the end entities
+                                lines.append(f"    {target1} }}o--o{{ {target2} : \"many-to-many\"")
+                                rendered_relationships.add(rel_id1)
+            
+            except Exception as e:
+                lines.append(f"    %% Error processing relationships for {model_name}: {str(e)}")
+        
+        return "\n".join(lines)
+    
     def _simplify_type_for_mermaid(self, type_str: str) -> str:
         """
         Simplify a Python type string for Mermaid ER diagram display.
@@ -430,121 +550,46 @@ class ModelVisualizer:
         Generate a Mermaid ER diagram for all registered models.
         
         Returns:
-            String containing Mermaid ER diagram markup.
+            String containing Mermaid ER diagram markup in markdown format.
         """
-        if not self.model_registry:
-            return "```mermaid\nerDiagram\n    %% No models found. Run init_db first.\n```"
+        # Get the raw Mermaid content
+        content = self._generate_mermaid_content()
         
-        lines = ["```mermaid", "erDiagram"]
+        # Wrap in markdown code fences
+        return f"```mermaid\n{content}\n```"
+    
+    def mermaid_link(self) -> str:
+        """
+        Generate a Mermaid Live Editor link for the ER diagram.
         
-        # Keep track of rendered relationships to avoid duplicates
-        rendered_relationships = set()
-        processed_models = set()
+        Returns:
+            URL string that opens the diagram in Mermaid Live Editor.
+        """
+        # Code to handle mermaid.live base64 links
+        import base64, json, zlib
         
-        # Try to process all models, but continue even if some fail
-        for model_name, model_class in self.model_registry.items():
-            try:
-                table_name = getattr(model_class, "__tablename__", model_name.lower())
-                processed_models.add(model_name)
-                
-                # Add entity definition
-                lines.append(f"    {table_name} {{")
-                
-                # Get fields for this model
-                fields = self._get_field_information(model_class)
-                
-                # Add fields
-                for field_name, field_info in fields.items():
-                    # Format type
-                    field_type = self._simplify_type_for_mermaid(str(field_info["type"]))
-                    
-                    # If it's a relationship, use the proper model name
-                    if field_info.get("is_virtual", False) and field_info.get("related_model"):
-                        related_model = field_info["related_model"]
-                        if field_info.get("is_list", False):
-                            # For list fields like 'tags', use the proper casing for model name
-                            field_type = f"{related_model}[]"
-                        else:
-                            # For single object reference, use the model name directly
-                            field_type = related_model
-                    
-                    # Format attributes with proper Mermaid syntax
-                    attrs_str = self._format_field_attributes(field_info)
-                    
-                    # Add field
-                    lines.append(f"        {field_type} {field_name}{attrs_str}")
-                
-                # Close entity definition
-                lines.append("    }")
-            
-            except Exception as e:
-                lines.append(f"    %% Error defining {model_name}: {str(e)}")
+        def js_btoa(data):
+            return base64.b64encode(data)
+
+        def pako_deflate(data):
+            compress = zlib.compressobj(9, zlib.DEFLATED, 15, 8, zlib.Z_DEFAULT_STRATEGY)
+            compressed_data = compress.compress(data)
+            compressed_data += compress.flush()
+            return compressed_data
+
+        def gen_pako_link(graph_markdown: str):
+            jGraph = {"code": graph_markdown, "mermaid": {"theme": "default"}}
+            byte_str = json.dumps(jGraph).encode('utf-8')
+            deflated = pako_deflate(byte_str)
+            d_encode = js_btoa(deflated)
+            link = 'https://mermaid.live/edit#pako:' + d_encode.decode('ascii')
+            return link
+
+        # Get the raw Mermaid content directly (without markdown fences)
+        mermaid_content = self._generate_mermaid_content()
         
-        # Add relationships between models
-        for model_name, model_class in self.model_registry.items():
-            try:
-                if model_name not in processed_models:
-                    continue
-                    
-                table_name = getattr(model_class, "__tablename__", model_name.lower())
-                
-                # Get fields for this model
-                fields = self._get_field_information(model_class)
-                
-                # Add relationships based on foreign keys
-                for field_name, field_info in fields.items():
-                    if field_info.get("is_foreign_key", False) and field_info.get("foreign_key_reference"):
-                        # Parse the foreign key reference to get the target table
-                        fk_ref = field_info["foreign_key_reference"]
-                        target_table = fk_ref.split(".")[0] if "." in fk_ref else fk_ref
-                        
-                        # Create relationship ID to avoid duplicates
-                        rel_id = f"{table_name}_{target_table}_{field_name}"
-                        if rel_id in rendered_relationships:
-                            continue
-                        
-                        # Add the relationship
-                        lines.append(f"    {table_name} ||--o{{ {target_table} : \"{field_name}\"")
-                        rendered_relationships.add(rel_id)
-                
-                # Add many-to-many relationships
-                # Check if this model might be a junction table
-                if len(fields) >= 3:  # id + at least 2 foreign keys
-                    foreign_key_fields = [f for f in fields.values() if f.get("is_foreign_key", False)]
-                    
-                    if len(foreign_key_fields) >= 2:
-                        # This might be a junction table, try to render special M:N relationship
-                        for i, fk1 in enumerate(foreign_key_fields):
-                            for fk2 in foreign_key_fields[i+1:]:
-                                # Skip if either field doesn't have a foreign key reference
-                                if not fk1.get("foreign_key_reference") or not fk2.get("foreign_key_reference"):
-                                    continue
-                                    
-                                # Get the target tables
-                                target1 = fk1["foreign_key_reference"].split(".")[0]
-                                target2 = fk2["foreign_key_reference"].split(".")[0]
-                                
-                                # Skip self-references or duplicates
-                                if target1 == target2:
-                                    continue
-                                    
-                                # Create relationship IDs
-                                rel_id1 = f"{target1}_{target2}_m2m"
-                                rel_id2 = f"{target2}_{target1}_m2m"
-                                
-                                if rel_id1 in rendered_relationships or rel_id2 in rendered_relationships:
-                                    continue
-                                    
-                                # Add the many-to-many relationship directly between the end entities
-                                lines.append(f"    {target1} }}o--o{{ {target2} : \"many-to-many\"")
-                                rendered_relationships.add(rel_id1)
-            
-            except Exception as e:
-                lines.append(f"    %% Error processing relationships for {model_name}: {str(e)}")
-        
-        lines.append("```")
-        
-        return "\n".join(lines)
+        # Generate the link
+        return gen_pako_link(mermaid_content)
     
     # Alias for backward compatibility
     generate_mermaid_er_diagram = mermaid

@@ -268,6 +268,38 @@ class ModelVisualizer:
                 "is_required": False  # Changed: primary keys are not considered "required" for the diagram
             }
             
+            # For EasyModel tables, make sure created_at and updated_at are included
+            # These fields are automatically added by EasyModel but may not be in the model definitions
+            is_easy_model = False
+            # Check class hierarchy to determine if this is an EasyModel
+            for base in model_class.__mro__:
+                if base.__name__ == "EasyModel":
+                    is_easy_model = True
+                    break
+            
+            if is_easy_model:
+                # Add created_at timestamp field
+                fields["created_at"] = {
+                    "name": "created_at",
+                    "type": "datetime",
+                    "is_primary": False,
+                    "is_foreign_key": False,
+                    "foreign_key_reference": None,
+                    "is_virtual": False,
+                    "is_required": False  # Not required for user input as handled automatically
+                }
+                
+                # Add updated_at timestamp field
+                fields["updated_at"] = {
+                    "name": "updated_at",
+                    "type": "datetime",
+                    "is_primary": False,
+                    "is_foreign_key": False,
+                    "foreign_key_reference": None,
+                    "is_virtual": False,
+                    "is_required": False  # Not required for user input as handled automatically
+                }
+            
             # Get standard database fields
             if hasattr(model_class, "__annotations__"):
                 for field_name, field_type in model_class.__annotations__.items():
@@ -297,6 +329,9 @@ class ModelVisualizer:
                     # Check if it's a primary key
                     is_primary = field_name == "id"
                     
+                    # Check if it's an auto-generated timestamp field
+                    is_auto_timestamp = field_name in ["created_at", "updated_at"]
+                    
                     # Store field information
                     fields[field_name] = {
                         "name": field_name,
@@ -305,7 +340,7 @@ class ModelVisualizer:
                         "is_foreign_key": False,
                         "foreign_key_reference": None,
                         "is_virtual": False,
-                        "is_required": not is_optional and not is_primary  # Primary keys are not "required" for the diagram
+                        "is_required": not is_optional and not is_primary and not is_auto_timestamp  # Don't mark primary keys and auto timestamps as "required"
                     }
             
             # Get foreign key information and update fields
@@ -323,7 +358,7 @@ class ModelVisualizer:
                         "is_foreign_key": True,
                         "foreign_key_reference": fk_target,
                         "is_virtual": False,
-                        "is_required": field_name != "id"  # Only mark as required if not the id field
+                        "is_required": field_name != "id" and field_name not in ["created_at", "updated_at"]  # Don't mark auto timestamps as required
                     }
             
             # Get virtual relationship fields
@@ -374,7 +409,14 @@ class ModelVisualizer:
                 # Get fields for this model
                 fields = self._get_field_information(model_class)
                 
-                # Add fields
+                # Separate timestamp fields to place them at the bottom
+                timestamp_fields = {}
+                if "created_at" in fields:
+                    timestamp_fields["created_at"] = fields.pop("created_at")
+                if "updated_at" in fields:
+                    timestamp_fields["updated_at"] = fields.pop("updated_at")
+                
+                # Add regular fields first
                 for field_name, field_info in fields.items():
                     # Format type
                     field_type = self._simplify_type_for_mermaid(str(field_info["type"]))
@@ -394,6 +436,14 @@ class ModelVisualizer:
                     
                     # Add field
                     lines.append(f"        {field_type} {field_name}{attrs_str}")
+                
+                # Add timestamp fields at the bottom
+                for field_name in ["created_at", "updated_at"]:
+                    if field_name in timestamp_fields:
+                        field_info = timestamp_fields[field_name]
+                        field_type = self._simplify_type_for_mermaid(str(field_info["type"]))
+                        attrs_str = self._format_field_attributes(field_info)
+                        lines.append(f"        {field_type} {field_name}{attrs_str}")
                 
                 # Close entity definition
                 lines.append("    }")
@@ -506,7 +556,7 @@ class ModelVisualizer:
             "bool": "boolean",
             "dict": "object",
             "Dict": "object",
-            "datetime": "date",
+            "datetime": "datetime",
             "date": "date",
             "time": "time",
             "bytes": "binary",

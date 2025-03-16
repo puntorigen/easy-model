@@ -21,6 +21,7 @@ A simplified SQLModel-based ORM for async database operations in Python. async-e
 - 📝 Type hints for better IDE support
 - 🕒 Automatic `id`, `created_at` and `updated_at` fields provided by default
 - 🔄 Automatic schema migrations for evolving database models
+- 📊 Visualization of database schema using Mermaid ER diagrams
 
 ## Installation
 
@@ -211,6 +212,89 @@ deleted_count = await User.delete({"is_active": False})
 # Delete with compound criteria
 await Post.delete({"user": {"username": "john_doe"}, "is_published": False})
 ```
+
+## Database Schema Visualization
+
+The package includes a `ModelVisualizer` class that makes it easy to generate Entity-Relationship (ER) diagrams for your database models using Mermaid syntax.
+
+```python
+from async_easy_model import EasyModel, init_db, db_config, ModelVisualizer
+
+# Initialize your models and database
+await init_db()
+
+# Create a visualizer
+visualizer = ModelVisualizer()
+
+# Generate a Mermaid ER diagram
+er_diagram = visualizer.mermaid()
+print(er_diagram)
+
+# Generate a shareable link to view the diagram online
+er_link = visualizer.mermaid_link()
+print(er_link)
+
+# Customize the diagram title
+visualizer.set_title("My Project Database Schema")
+custom_diagram = visualizer.mermaid()
+```
+
+### Example Mermaid ER Diagram Output
+
+```mermaid
+---
+title: EasyModel Table Schemas
+config:
+    layout: elk
+---
+erDiagram
+    author {
+        number id PK
+        string name "required"
+        string email
+    }
+    book {
+        number id PK
+        string title "required"
+        number author_id FK
+        string isbn
+        number published_year
+        author author "virtual"
+        tag[] tags "virtual"
+    }
+    tag {
+        number id PK
+        string name "required"
+        book[] books "virtual"
+    }
+    book_tag {
+        number id PK
+        number book_id FK "required"
+        number tag_id FK "required"
+        book book "virtual"
+        tag tag "virtual"
+    }
+    review {
+        number id PK
+        number book_id FK "required"
+        number rating "required"
+        string comment
+        string reviewer_name "required"
+        book book "virtual"
+    }
+    book ||--o{ author : "author_id"
+    book_tag ||--o{ book : "book_id"
+    book_tag ||--o{ tag : "tag_id"
+    book }o--o{ tag : "many-to-many"
+    review ||--o{ book : "book_id"
+```
+
+The diagram automatically:
+- Shows all tables with their fields and data types
+- Identifies primary keys (PK) and foreign keys (FK)
+- Shows required fields and virtual relationships
+- Visualizes relationships between tables with proper cardinality
+- Properly handles many-to-many relationships
 
 ## Convenient Query Methods
 

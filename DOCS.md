@@ -13,10 +13,11 @@ This document provides comprehensive documentation for the async-easy-model pack
 7. [Automatic Relationship Detection](#automatic-relationship-detection)
 8. [Query Methods](#query-methods)
 9. [Automatic Schema Migrations](#automatic-schema-migrations)
-10. [Advanced Features](#advanced-features)
-11. [Standardized API Methods](#standardized-api-methods)
-12. [Examples](#examples)
-13. [API Reference](#api-reference)
+10. [Database Visualization](#database-visualization)
+11. [Advanced Features](#advanced-features)
+12. [Standardized API Methods](#standardized-api-methods)
+13. [Examples](#examples)
+14. [API Reference](#api-reference)
 
 ## Installation
 
@@ -588,6 +589,138 @@ If you encounter these limitations, you may need to:
 - Manually modify your database schema for complex changes
 - Perform data migrations in your application code
 
+## Database Visualization
+
+The async-easy-model package includes a powerful visualization component that allows you to generate Entity-Relationship (ER) diagrams for your database schema using the Mermaid diagram syntax. This feature is particularly useful for documentation, understanding complex model relationships, and communicating database structure to team members.
+
+### ModelVisualizer Class
+
+The `ModelVisualizer` class automatically discovers all registered EasyModel models and generates ER diagrams showing tables, fields, and relationships.
+
+```python
+from async_easy_model import EasyModel, init_db, db_config, ModelVisualizer
+
+# Define your models...
+
+# Initialize database
+await init_db(model_classes=[Author, Book, Tag, BookTag, Review])
+
+# Create visualizer instance with default title
+visualizer = ModelVisualizer()
+
+# Generate Mermaid ER diagram in markdown format
+er_diagram = visualizer.mermaid()
+print(er_diagram)
+
+# Generate a link to view the diagram in Mermaid Live Editor
+link = visualizer.mermaid_link()
+print(link)
+
+# Optionally save to a file
+with open("database_schema.md", "w") as f:
+    f.write("# Database Schema\n\n")
+    f.write(er_diagram)
+```
+
+### Customizing the Diagram Title
+
+You can customize the title of your ER diagram:
+
+```python
+# Set title during initialization
+visualizer = ModelVisualizer(title="My Project Database Schema")
+
+# Or change it after initialization
+visualizer.set_title("Library Management System")
+custom_diagram = visualizer.mermaid()
+```
+
+### Example Output
+
+The generated Mermaid ER diagram will look like this:
+
+```mermaid
+---
+title: EasyModel Table Schemas
+config:
+    layout: elk
+---
+erDiagram
+    author {
+        number id PK
+        string name "required"
+        string email
+    }
+    book {
+        number id PK
+        string title "required"
+        number author_id FK
+        string isbn
+        number published_year
+        author author "virtual"
+        tag[] tags "virtual"
+    }
+    tag {
+        number id PK
+        string name "required"
+        book[] books "virtual"
+    }
+    book_tag {
+        number id PK
+        number book_id FK "required"
+        number tag_id FK "required"
+        book book "virtual"
+        tag tag "virtual"
+    }
+    review {
+        number id PK
+        number book_id FK "required"
+        number rating "required"
+        string comment
+        string reviewer_name "required"
+        book book "virtual"
+    }
+    book ||--o{ author : "author_id"
+    book_tag ||--o{ book : "book_id"
+    book_tag ||--o{ tag : "tag_id"
+    book }o--o{ tag : "many-to-many"
+    review ||--o{ book : "book_id"
+```
+
+### Understanding the Diagram
+
+The ER diagram includes:
+
+1. **Tables**: Each model is represented as a table with its table name
+2. **Fields**: Each field is shown with its data type
+3. **Primary Keys**: Fields marked with `PK`
+4. **Foreign Keys**: Fields marked with `FK`
+5. **Virtual Fields**: Relationship fields created automatically by EasyModel
+6. **Relationships**: Lines showing connections between tables with cardinality indicators:
+   - `||--o{`: One-to-many relationship
+   - `}o--o{`: Many-to-many relationship
+   - `||--||`: One-to-one relationship
+7. **Required Fields**: Fields that are required are shown with the `"required"` attribute
+
+### Benefits of Visualization
+
+- **Documentation**: Automatically generate up-to-date documentation of your database schema
+- **Understanding Relationships**: Clearly see how tables are related, including many-to-many relationships
+- **Sharing**: Generate links to share with team members
+- **Development Planning**: Plan database changes by visualizing the current structure
+
+### API Reference
+
+#### ModelVisualizer Class
+
+**Constructor:**
+- `ModelVisualizer(title: str = "EasyModel Table Schemas")`: Initialize the visualizer with an optional title
+
+**Methods:**
+- `mermaid() -> str`: Generate a Mermaid ER diagram as a markdown string
+- `mermaid_link() -> str`: Generate a shareable link to view the diagram in Mermaid Live Editor
+- `set_title(title: str) -> None`: Set or update the diagram title
+
 ## Advanced Features
 
 ### Custom Session Management
@@ -875,26 +1008,3 @@ async def main():
 
 # Run the example
 asyncio.run(main())
-```
-
-These examples demonstrate the power of EasyModel's relationship handling, including direct access to relationship fields, querying with nested criteria, and dictionary conversion with relationships.
-
-## API Reference
-
-### EasyModel Class
-
-The base model class that provides common async database operations.
-
-**Class Methods:**
-
-- `get_session()`: Get a database session for transactions
-- `insert(data)`: Insert a single or multiple records
-- `select(criteria, all=False, first=False, include_relationships=True, order_by=None, limit=None)`: Select records based on criteria
-- `update(data, criteria)`: Update records based on criteria
-- `delete(criteria)`: Delete records based on criteria
-- `get_with_related(id, *relationships)`: Get a record with specific relationships
-
-**Instance Methods:**
-
-- `load_related(*relationships)`: Load relationships for an instance
-- `to_dict(include_relationships=False, max_depth=1)`: Convert instance to dictionary

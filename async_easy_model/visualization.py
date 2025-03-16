@@ -249,7 +249,7 @@ class ModelVisualizer:
                 "is_foreign_key": False,
                 "foreign_key_reference": None,
                 "is_virtual": False,
-                "is_required": True
+                "is_required": False  # Changed: primary keys are not considered "required" for the diagram
             }
             
             # Get standard database fields
@@ -289,7 +289,7 @@ class ModelVisualizer:
                         "is_foreign_key": False,
                         "foreign_key_reference": None,
                         "is_virtual": False,
-                        "is_required": not is_optional
+                        "is_required": not is_optional and not is_primary  # Primary keys are not "required" for the diagram
                     }
             
             # Get foreign key information and update fields
@@ -307,7 +307,7 @@ class ModelVisualizer:
                         "is_foreign_key": True,
                         "foreign_key_reference": fk_target,
                         "is_virtual": False,
-                        "is_required": True  # Assume foreign keys are required by default
+                        "is_required": field_name != "id"  # Only mark as required if not the id field
                     }
             
             # Get virtual relationship fields
@@ -337,6 +337,7 @@ class ModelVisualizer:
         # Handle common container types
         if simplified.startswith("List["):
             inner_type = simplified[5:-1]  # Extract the type inside List[]
+            # Preserve proper casing for model names
             return f"{inner_type}[]"
         
         # Handle other complex types that might confuse Mermaid
@@ -369,6 +370,60 @@ class ModelVisualizer:
         }
         
         return type_map.get(simplified, simplified)
+    
+    def _get_model_name_for_table(self, table_name: str) -> str:
+        """
+        Get the proper cased model name for a table name.
+        
+        Args:
+            table_name: The table name to find the model name for
+            
+        Returns:
+            The properly cased model name
+        """
+        for model_name, model_class in self.model_registry.items():
+            if getattr(model_class, "__tablename__", model_name.lower()) == table_name:
+                return model_name
+        return table_name  # Fallback to table name if no model found
+    
+    def _format_field_attributes(self, field_info: Dict[str, Any]) -> str:
+        """
+        Format field attributes according to Mermaid syntax.
+        Only the last attribute should have double quotes, and attributes are separated by spaces.
+        
+        Args:
+            field_info: Dictionary with field information
+            
+        Returns:
+            String with properly formatted attributes for the Mermaid diagram
+        """
+        attrs = []
+        
+        # Order is important: PK, FK, and then other attributes
+        if field_info.get("is_primary", False):
+            attrs.append("PK")
+        if field_info.get("is_foreign_key", False):
+            attrs.append("FK")
+        
+        # The comment attribute (should be last and in quotes)
+        comment = None
+        if field_info.get("is_virtual", False):
+            comment = "virtual"
+        elif field_info.get("is_required", False):
+            comment = "required"
+            
+        # Format the attribute string
+        if not attrs and not comment:
+            return ""
+        
+        result = ""
+        if attrs:
+            result = " " + " ".join(attrs)
+            
+        if comment:
+            result += f' "{comment}"'
+            
+        return result
     
     def generate_mermaid_er_diagram(self) -> str:
         """
@@ -403,25 +458,21 @@ class ModelVisualizer:
                     # Format type
                     field_type = self._simplify_type_for_mermaid(str(field_info["type"]))
                     
-                    # Add attributes like PK, FK
-                    attrs = []
-                    if field_info.get("is_primary", False):
-                        attrs.append("PK")
-                    if field_info.get("is_foreign_key", False):
-                        attrs.append("FK")
+                    # If it's a relationship, use the proper model name
+                    if field_info.get("is_virtual", False) and field_info.get("related_model"):
+                        related_model = field_info["related_model"]
+                        if field_info.get("is_list", False):
+                            # For list fields like 'tags', use the proper casing for model name
+                            field_type = f"{related_model}[]"
+                        else:
+                            # For single object reference, use the model name directly
+                            field_type = related_model
                     
-                    # Add indicator for virtual fields
-                    if field_info.get("is_virtual", False):
-                        attrs.append("virtual")
-                    
-                    # Format attributes string
-                    attrs_str = f" {', '.join(attrs)}" if attrs else ""
-                    
-                    # Add required field indicator (asterisk)
-                    field_name_formatted = f"*{field_name}" if field_info.get("is_required", True) else field_name
+                    # Format attributes with proper Mermaid syntax
+                    attrs_str = self._format_field_attributes(field_info)
                     
                     # Add field
-                    lines.append(f"        {field_type} {field_name_formatted}{attrs_str}")
+                    lines.append(f"        {field_type} {field_name}{attrs_str}")
                 
                 # Close entity definition
                 lines.append("    }")

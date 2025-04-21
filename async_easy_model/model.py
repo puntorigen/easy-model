@@ -1398,7 +1398,7 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
     if model_classes is None:
         model_classes = []
         # Get all model classes by inspecting the modules
-        for module_name, module in sys.modules.items():
+        for module_name, module in list(sys.modules.items()):
             if hasattr(module, "__dict__"):
                 for cls_name, cls in module.__dict__.items():
                     if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:

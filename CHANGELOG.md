@@ -2,6 +2,21 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.2.9] - 2025-06-29
+
+### Fixed
+- **CRITICAL**: Enhanced async session management with explicit exception handling and cleanup
+- **CRITICAL**: Fixed memory leaks from unclosed database sessions
+- **CRITICAL**: Improved connection pool configuration for all database types (not just PostgreSQL)
+- Added explicit `await session.rollback()` on exceptions to prevent hanging transactions
+- Added explicit `await session.close()` in finally blocks to guarantee session cleanup
+- Extended connection pool settings (pool_size, max_overflow, pool_timeout, pool_recycle, pool_pre_ping) to all database types
+- Improved session lifecycle documentation and error handling
+
+### Changed
+- Enhanced `get_session()` method with robust cleanup patterns
+- Connection pool configuration now applies universally instead of PostgreSQL-only
+
 ## [0.2.5] - 2025-03-15
 
 ### Added

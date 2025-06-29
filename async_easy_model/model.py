@@ -73,15 +73,21 @@ class DatabaseConfig:
     def get_engine(self):
         """Get or create the SQLAlchemy engine."""
         if DatabaseConfig._engine is None:
-            kwargs = {}
+            # Apply connection pool configuration to all database types
+            # to prevent connection leaks and ensure proper resource management
+            kwargs = {
+                "pool_size": 10,        # Base number of connections in the pool
+                "max_overflow": 30,     # Additional connections allowed beyond pool_size
+                "pool_timeout": 30,     # Timeout in seconds for getting connection from pool
+                "pool_recycle": 1800,   # Recycle connections after 30 minutes
+                "pool_pre_ping": True,  # Verify connections before use
+            }
+            
+            # PostgreSQL-specific optimizations (if needed in the future)
             if self.db_type == "postgresql":
-                kwargs.update({
-                    "pool_size": 10,
-                    "max_overflow": 30,
-                    "pool_timeout": 30,
-                    "pool_recycle": 1800,
-                    "pool_pre_ping": True,
-                })
+                # PostgreSQL already has good defaults above
+                pass
+                
             DatabaseConfig._engine = create_async_engine(
                 self.get_connection_url(),
                 **kwargs
@@ -115,9 +121,24 @@ class EasyModel(SQLModel):
     @classmethod
     @contextlib.asynccontextmanager
     async def get_session(cls):
-        """Provide a transactional scope for database operations."""
-        async with db_config.get_session_maker()() as session:
+        """Provide a transactional scope for database operations.
+        
+        This method ensures proper session cleanup by:
+        - Explicitly rolling back transactions on exceptions
+        - Explicitly closing sessions in all cases
+        - Proper exception propagation
+        """
+        session = None
+        try:
+            session = db_config.get_session_maker()()
             yield session
+        except Exception:
+            if session:
+                await session.rollback()
+            raise
+        finally:
+            if session:
+                await session.close()
 
     @classmethod
     def _get_relationship_fields(cls) -> List[str]:

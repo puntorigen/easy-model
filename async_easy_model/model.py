@@ -14,6 +14,9 @@ import re
 
 T = TypeVar("T", bound="EasyModel")
 
+# Global database configuration instance (forward declaration)
+db_config = None
+
 class DatabaseConfig:
     _engine = None
     _session_maker = None
@@ -107,13 +110,74 @@ class DatabaseConfig:
 # Global database configuration instance.
 db_config = DatabaseConfig()
 
+def _normalize_datetime_for_db(value: Any) -> Any:
+    """
+    Normalize datetime values for database compatibility.
+    
+    For PostgreSQL with TIMESTAMP WITHOUT TIME ZONE columns, converts timezone-aware
+    datetimes to timezone-naive UTC datetimes. For other databases, returns the value unchanged.
+    
+    Args:
+        value: The value to potentially normalize
+        
+    Returns:
+        The normalized value
+    """
+    global db_config
+    
+    # Only process datetime objects
+    if not isinstance(value, datetime):
+        return value
+    
+    # Only normalize for PostgreSQL
+    if db_config and db_config.db_type == "postgresql":
+        # If the datetime is timezone-aware, convert to UTC and make naive
+        if value.tzinfo is not None:
+            return value.astimezone(tz.utc).replace(tzinfo=None)
+    
+    return value
+
+def _normalize_data_for_db(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize all datetime values in a data dictionary for database compatibility.
+    
+    Args:
+        data: Dictionary containing field values
+        
+    Returns:
+        Dictionary with normalized datetime values
+    """
+    normalized_data = {}
+    for key, value in data.items():
+        normalized_data[key] = _normalize_datetime_for_db(value)
+    return normalized_data
+
+def _get_normalized_datetime() -> datetime:
+    """
+    Get a datetime that's appropriate for the current database backend.
+    
+    Returns:
+        For PostgreSQL: timezone-naive UTC datetime
+        For SQLite: timezone-aware UTC datetime (for backward compatibility)
+    """
+    global db_config
+    
+    utc_now = datetime.now(tz.utc)
+    
+    # For PostgreSQL, return timezone-naive datetime
+    if db_config and db_config.db_type == "postgresql":
+        return utc_now.replace(tzinfo=None)
+    
+    # For SQLite and others, return timezone-aware datetime (backward compatibility)
+    return utc_now
+
 class EasyModel(SQLModel):
     """
     Base model class providing common async database operations.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
-    created_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
-    updated_at: Optional[datetime] = Field(default_factory=lambda: datetime.now(tz.utc))
+    created_at: Optional[datetime] = Field(default_factory=_get_normalized_datetime)
+    updated_at: Optional[datetime] = Field(default_factory=_get_normalized_datetime)
 
     # Default table args with extend_existing=True to ensure all subclasses can redefine tables
     __table_args__ = {"extend_existing": True}
@@ -436,6 +500,9 @@ class EasyModel(SQLModel):
         async with cls.get_session() as session:
             try:
                 processed_data = await cls._process_relationships_for_insert(session, data)
+                
+                # Normalize datetime values for database compatibility
+                processed_data = _normalize_data_for_db(processed_data)
                 
                 # Create the model instance
                 obj = cls(**processed_data)
@@ -769,9 +836,10 @@ class EasyModel(SQLModel):
                             if existing:
                                 raise ValueError(f"Cannot update {field_name} to '{new_value}': value already exists")
                 
-                # Apply the updates
+                # Apply the updates with datetime normalization
                 for key, value in data.items():
-                    setattr(record, key, value)
+                    normalized_value = _normalize_datetime_for_db(value)
+                    setattr(record, key, normalized_value)
                 
                 # Process many-to-many relationships if any
                 for rel_name, rel_data in many_to_many_data.items():
@@ -1383,7 +1451,7 @@ class EasyModel(SQLModel):
 def _update_updated_at(session, flush_context, instances):
     for instance in session.dirty:
         if isinstance(instance, EasyModel) and hasattr(instance, "updated_at"):
-            instance.updated_at = datetime.now(tz.utc)
+            instance.updated_at = _get_normalized_datetime()
 
 async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = None):
     """

@@ -2,6 +2,27 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.0] - 2025-06-30
+
+### Added
+- **PostgreSQL DateTime Compatibility**: Automatic datetime normalization for PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns
+- Backend detection system that automatically converts timezone-aware datetimes to timezone-naive for PostgreSQL
+- Maintains backward compatibility with SQLite by preserving timezone-aware datetimes
+- Comprehensive datetime handling in `insert()` and `update()` methods
+- Updated event listener for `updated_at` field to use normalized datetimes
+
+### Fixed
+- **CRITICAL**: Fixed `asyncpg.exceptions.DataError` when using timezone-aware datetimes with PostgreSQL
+- Resolved "can't subtract offset-naive and offset-aware datetimes" errors during database operations
+- EasyModel now automatically detects PostgreSQL backend and normalizes datetime objects transparently
+
+### Technical Details
+- Added `_normalize_datetime_for_db()` helper function for datetime conversion
+- Added `_normalize_data_for_db()` for batch datetime normalization
+- Added `_get_normalized_datetime()` for backend-appropriate datetime generation
+- Updated `created_at` and `updated_at` field defaults to use normalized datetime function
+- All changes are transparent to application code - no API changes required
+
 ## [0.2.9] - 2025-06-29
 
 ### Fixed

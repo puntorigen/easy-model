@@ -2,6 +2,21 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.1] - 2025-06-30
+
+### Fixed
+- **Pydantic V2 Compatibility**: Fixed all deprecated `__fields__` usage, replaced with `model_fields`
+- **SQLAlchemy Compatibility**: Fixed deprecated `Column.copy()` usage in migrations module
+- Eliminated all deprecation warnings when using Pydantic V2.x and modern SQLAlchemy
+- Updated auto_relationships.py, model.py, visualization.py, and migrations.py for modern API compliance
+- No breaking changes - all functionality remains identical
+
+### Technical Details
+- Replaced 7 instances of deprecated `__fields__` with `model_fields` across codebase
+- Replaced `Column.copy()` with manual column creation in migration system
+- All changes maintain full backward compatibility
+- Package now fully compliant with Pydantic V2 and SQLAlchemy 2.x standards
+
 ## [0.3.0] - 2025-06-30
 
 ### Added

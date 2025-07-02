@@ -80,7 +80,7 @@ class ModelVisualizer:
         foreign_keys = {}
         
         try:
-            # Check model annotations and __fields__ for foreign keys
+            # Check model annotations and model_fields for foreign keys
             if hasattr(model_class, "__annotations__"):
                 for field_name, field_type in model_class.__annotations__.items():
                     if hasattr(model_class, field_name):
@@ -102,8 +102,8 @@ class ModelVisualizer:
                     pass
             
             # Try to infer foreign keys from field names ending with _id
-            if hasattr(model_class, "__fields__"):
-                for field_name in model_class.__fields__:
+            if hasattr(model_class, "model_fields"):
+                for field_name in model_class.model_fields:
                     if field_name.endswith("_id") and field_name not in foreign_keys:
                         related_name = field_name[:-3]  # Remove _id suffix
                         # Check if there's a model with this name

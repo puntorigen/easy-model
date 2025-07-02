@@ -64,10 +64,26 @@ async def _create_table_without_indexes(table, connection):
     """
     # Create a copy of the table without indexes
     metadata = MetaData()
+    # Manually create columns instead of using deprecated copy() method
+    new_columns = []
+    for col in table.columns:
+        new_col = Column(
+            col.name,
+            col.type,
+            nullable=col.nullable,
+            default=col.default,
+            server_default=col.server_default,
+            primary_key=col.primary_key,
+            unique=col.unique,
+            autoincrement=col.autoincrement,
+            comment=col.comment
+        )
+        new_columns.append(new_col)
+    
     new_table = Table(
         table.name,
         metadata,
-        *[c.copy() for c in table.columns],
+        *new_columns,
         schema=table.schema
     )
     

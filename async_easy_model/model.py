@@ -395,7 +395,7 @@ class EasyModel(SQLModel):
             List of field names that have unique constraints
         """
         unique_fields = []
-        for name, field in cls.__fields__.items():
+        for name, field in cls.model_fields.items():
             if name != 'id' and hasattr(field, "field_info") and field.field_info.extra.get('unique', False):
                 unique_fields.append(name)
         return unique_fields
@@ -676,7 +676,7 @@ class EasyModel(SQLModel):
         """
         # Look for unique fields in the related model to use for searching
         unique_fields = []
-        for name, field in related_model.__fields__.items():
+        for name, field in related_model.model_fields.items():
             if (hasattr(field, "field_info") and 
                 field.field_info.extra.get('unique', False)):
                 unique_fields.append(name)
@@ -822,7 +822,7 @@ class EasyModel(SQLModel):
                 # Check for unique constraints before updating
                 for field_name, new_value in data.items():
                     if field_name != 'id' and hasattr(cls, field_name):
-                        field = getattr(cls.__fields__.get(field_name), 'field_info', None)
+                        field = getattr(cls.model_fields.get(field_name), 'field_info', None)
                         if field and field.extra.get('unique', False):
                             # Check if the new value would conflict with an existing record
                             check_statement = select(cls).where(

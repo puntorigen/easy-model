@@ -119,10 +119,10 @@ def get_foreign_keys_from_model(model_cls: Type[SQLModel]) -> Dict[str, str]:
     
     foreign_keys = {}
     
-    # First method: Check SQLModel's __fields__ dictionary
-    if hasattr(model_cls, "__fields__"):
-        logger.info(f"Using __fields__ to find foreign keys in {model_cls.__name__}")
-        for field_name, field_info in model_cls.__fields__.items():
+    # First method: Check SQLModel's model_fields dictionary (Pydantic V2)
+    if hasattr(model_cls, "model_fields"):
+        logger.info(f"Using model_fields to find foreign keys in {model_cls.__name__}")
+        for field_name, field_info in model_cls.model_fields.items():
             # Check if the field has a foreign_key attribute
             if hasattr(field_info, "foreign_key") and field_info.foreign_key:
                 foreign_key = field_info.foreign_key
@@ -156,7 +156,7 @@ def get_foreign_keys_from_model(model_cls: Type[SQLModel]) -> Dict[str, str]:
     # Second method: Try to infer foreign keys from field names
     if not foreign_keys:
         logger.info(f"No foreign keys found in model {model_cls.__name__} metadata, trying to detect from field names")
-        for field_name in getattr(model_cls, "__fields__", {}):
+        for field_name in getattr(model_cls, "model_fields", {}):
             if field_name.endswith("_id"):
                 # Infer the referenced model from the field name
                 model_name = field_name[:-3]  # Remove _id suffix
@@ -593,7 +593,7 @@ def is_junction_table(model_cls: Type[SQLModel]) -> bool:
     
     # Check if all non-standard fields are foreign keys
     standard_fields = {'id', 'created_at', 'updated_at'}
-    model_fields = set(getattr(model_cls, '__fields__', {}).keys())
+    model_fields = set(getattr(model_cls, 'model_fields', {}).keys())
     non_standard_fields = model_fields - standard_fields
     foreign_key_fields = set(foreign_keys.keys())
     

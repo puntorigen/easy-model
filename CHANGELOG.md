@@ -2,6 +2,22 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.2] - 2025-07-05
+
+### Fixed
+- **CRITICAL**: Fixed intermittent SQLAlchemy error "no such column: [junction_table].[foreign_key_column]"
+- **Root Cause**: Order-of-operations bug in `init_db` function where relationship processing occurred before table creation
+- **Solution**: Moved relationship processing to occur after all tables are created, ensuring complete schema exists before relationships are established
+- Eliminates race condition that could leave junction tables (like BrandUsers) with missing foreign key columns
+- Maintains all automatic relationship mapping functionality without API changes
+- Prevents inconsistent database state during initialization
+
+### Technical Details
+- Reordered operations in `init_db()` function: register models → run migrations → create tables → process relationships
+- This ensures all tables exist with their complete schema before many-to-many relationships are processed
+- The fix resolves intermittent failures in applications using junction tables for many-to-many relationships
+- No breaking changes - all existing functionality preserved
+
 ## [0.3.1] - 2025-06-30
 
 ### Fixed

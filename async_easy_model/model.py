@@ -1493,7 +1493,7 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
                     if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
                         model_classes.append(cls)
     
-    # Enable auto-relationships and register all models
+    # Enable auto-relationships and register all models, but DON'T process relationships yet
     if has_auto_relationships:
         # Enable auto-relationships with patch_metaclass=False
         enable_auto_relationships(patch_metaclass=False)
@@ -1502,8 +1502,7 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
         for model_cls in model_classes:
             register_model_class(model_cls)
         
-        # Process relationships for all registered models
-        process_all_models_for_relationships()
+        # NOTE: We'll process relationships AFTER tables are created to avoid missing column errors
     
     migration_results = {}
     
@@ -1528,6 +1527,11 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
         else:
             # Fall back to standard create_all if migrations aren't available
             await conn.run_sync(SQLModel.metadata.create_all)
+    
+    # NOW process relationships after all tables have been created
+    if has_auto_relationships:
+        logging.info("Processing auto-relationships after database initialization")
+        process_all_models_for_relationships()
     
     logging.info("Database initialized")
     return migration_results

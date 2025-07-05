@@ -2,6 +2,23 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.3] - 2025-07-05
+
+### Fixed
+- **Warning Suppression**: Fixed torch.distributed.reduce_op FutureWarning during database initialization
+- **Root Cause**: Module discovery was iterating through ALL loaded modules (including torch, numpy, etc.) triggering third-party library warnings
+- **Solution**: Added temporary warning suppression during model discovery phase using warnings.catch_warnings() context manager
+- Eliminates FutureWarning and DeprecationWarning from third-party libraries during init_db()
+- Maintains full model discovery functionality without intrusive blacklists
+- Clean, maintainable approach that works with any future third-party libraries
+
+### Technical Details
+- Temporarily suppresses FutureWarning and DeprecationWarning during sys.modules iteration
+- Uses warnings.catch_warnings() context manager for surgical warning suppression
+- Only affects warning behavior during model discovery, not globally
+- No hardcoded module lists to maintain - future-proof solution
+- Preserves all existing functionality while eliminating noisy warnings
+
 ## [0.3.2] - 2025-07-05
 
 ### Fixed

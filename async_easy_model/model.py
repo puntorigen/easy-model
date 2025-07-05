@@ -6,6 +6,7 @@ from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set
 import contextlib
 import os
 import sys
+import warnings
 from datetime import datetime, timezone as tz
 import inspect
 import json
@@ -1486,12 +1487,26 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
     # Get all SQLModel subclasses (our models) if not provided
     if model_classes is None:
         model_classes = []
-        # Get all model classes by inspecting the modules
-        for module_name, module in list(sys.modules.items()):
-            if hasattr(module, "__dict__"):
-                for cls_name, cls in module.__dict__.items():
-                    if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
-                        model_classes.append(cls)
+        # Temporarily suppress warnings during module discovery to avoid third-party library warnings
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            warnings.simplefilter("ignore", DeprecationWarning)
+            
+            # Get all model classes by inspecting the modules
+            for module_name, module in list(sys.modules.items()):
+                try:
+                    if hasattr(module, "__dict__") and module is not None:
+                        for cls_name, cls in module.__dict__.items():
+                            try:
+                                if isinstance(cls, type) and issubclass(cls, SQLModel) and cls != SQLModel and cls != EasyModel:
+                                    model_classes.append(cls)
+                            except (TypeError, AttributeError):
+                                # Skip any objects that can't be checked safely
+                                continue
+                except (AttributeError, TypeError, ImportError):
+                    # Skip modules that can't be inspected safely
+                    continue
     
     # Enable auto-relationships and register all models, but DON'T process relationships yet
     if has_auto_relationships:

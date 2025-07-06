@@ -21,7 +21,7 @@ def _get_sqlite_type(sqla_type):
     Convert SQLAlchemy type to SQLite type for ALTER TABLE statements.
     
     Args:
-        sqla_type: SQLAlchemy type
+        sqla_type: SQLAlchemy type object or string representation
         
     Returns:
         SQLite type string
@@ -40,11 +40,15 @@ def _get_sqlite_type(sqla_type):
         "DECIMAL": "NUMERIC",
         "TIMESTAMP": "TIMESTAMP",
         "DATETIME": "DATETIME",
-        "DATE": "DATE"
+        "DATE": "DATE",
+        "JSON": "TEXT"  # Handle JSON type
     }
     
-    # Get type name from SQLAlchemy type
-    type_name = sqla_type.__class__.__name__.upper()
+    # Get type name - handle both string and type objects
+    if isinstance(sqla_type, str):
+        type_name = sqla_type.upper()
+    else:
+        type_name = sqla_type.__class__.__name__.upper()
     
     # Try to match with SQLite type
     for key in type_map:
@@ -107,6 +111,39 @@ async def _create_indexes_one_by_one(table, connection):
                 logging.warning(f"Index {index.name} already exists, skipping")
             else:
                 raise
+
+def _serialize_column(column: Column) -> Dict[str, Any]:
+    """
+    Convert a SQLAlchemy Column object to a JSON-serializable dictionary.
+    
+    Args:
+        column: SQLAlchemy Column object to serialize
+        
+    Returns:
+        Dictionary containing serializable column information
+    """
+    column_data = {
+        "name": column.name,
+        "type": str(column.type),
+        "nullable": column.nullable,
+        "primary_key": column.primary_key,
+        "unique": column.unique,
+        "autoincrement": column.autoincrement,
+        "comment": column.comment
+    }
+    
+    # Handle default values
+    if column.default is not None:
+        if hasattr(column.default, 'arg'):
+            column_data["default"] = column.default.arg
+        else:
+            column_data["default"] = str(column.default)
+    
+    # Handle server defaults
+    if column.server_default is not None:
+        column_data["server_default"] = str(column.server_default)
+    
+    return column_data
 
 class MigrationManager:
     """Manages schema migrations for EasyModel classes."""
@@ -331,7 +368,7 @@ class MigrationManager:
                         "operation": "add_column",
                         "table_name": table_name,
                         "column_name": col_name,
-                        "column": column
+                        "column_data": _serialize_column(column)
                     })
         
         return operations
@@ -365,7 +402,7 @@ class MigrationManager:
                 elif op["operation"] == "add_column":
                     # Add column to existing table
                     table_name = op["table_name"]
-                    column = op["column"]
+                    column_data = op["column_data"]
                     col_name = op["column_name"]
                     
                     # Check if column already exists
@@ -379,18 +416,18 @@ class MigrationManager:
                         continue
                     
                     # Get SQLite type for the column
-                    col_type = _get_sqlite_type(column.type)
+                    col_type = _get_sqlite_type(column_data["type"])
                     
                     # Prepare nullable constraint
-                    nullable = "" if column.nullable else "NOT NULL"
+                    nullable = "" if column_data["nullable"] else "NOT NULL"
                     
                     # Prepare default value
                     default = ""
-                    if column.default is not None and hasattr(column.default, 'arg'):
-                        if isinstance(column.default.arg, str):
-                            default = f"DEFAULT '{column.default.arg}'"
+                    if "default" in column_data and column_data["default"] is not None:
+                        if isinstance(column_data["default"], str):
+                            default = f"DEFAULT '{column_data['default']}'"
                         else:
-                            default = f"DEFAULT {column.default.arg}"
+                            default = f"DEFAULT {column_data['default']}"
                     
                     # Create SQLite-compatible ALTER TABLE statement
                     alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type} {nullable} {default}"

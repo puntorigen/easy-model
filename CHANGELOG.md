@@ -2,6 +2,23 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.4] - 2025-07-06
+
+### Fixed
+- **CRITICAL**: Fixed JSON serialization error "Object of type Column is not JSON serializable" when using `sa_column=Column(JSON)` in model fields
+- **Root Cause**: Migration system was including entire SQLAlchemy Column objects in migration operations, which are not JSON serializable
+- **Solution**: Created `_serialize_column()` helper function to convert Column objects to JSON-serializable dictionaries
+- Models with `sa_column=Column(JSON)` now work without serialization errors during migrations
+- Enhanced `_get_sqlite_type()` to handle both string and object types, plus added explicit JSON type support
+
+### Technical Details
+- Added `_serialize_column()` function that extracts essential column information (name, type, nullable, default, etc.)
+- Updated `generate_migration_plan()` to use serialized column data instead of raw Column objects
+- Modified `apply_migration()` to work with the new serialized column data structure
+- Migration history records are now more readable and portable
+- Full backward compatibility maintained while fixing the serialization issue
+- Reduces memory usage in migration records by storing only essential column information
+
 ## [0.3.3] - 2025-07-05
 
 ### Fixed

@@ -23,6 +23,7 @@ A simplified SQLModel-based ORM for async database operations in Python. async-e
 - ⏰ **PostgreSQL DateTime Compatibility**: Automatic timezone-aware to timezone-naive datetime conversion for PostgreSQL TIMESTAMP WITHOUT TIME ZONE columns
 - 🔄 Automatic schema migrations for evolving database models
 - 📊 Visualization of database schema using Mermaid ER diagrams
+- 📋 **JSON Column Support**: Native support for JSON columns with proper serialization in migrations
 
 ## Installation
 

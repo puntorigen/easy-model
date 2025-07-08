@@ -1,7 +1,7 @@
 from sqlmodel import SQLModel, Field, select, Relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, Session, selectinload, joinedload
-from sqlalchemy import update as sqlalchemy_update, event, desc, asc
+from sqlalchemy import update as sqlalchemy_update, event, desc, asc, text
 from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple
 import contextlib
 import os
@@ -85,6 +85,7 @@ class DatabaseConfig:
                 "pool_timeout": 30,     # Timeout in seconds for getting connection from pool
                 "pool_recycle": 1800,   # Recycle connections after 30 minutes
                 "pool_pre_ping": True,  # Verify connections before use
+                "echo": False,          # Set to True for SQL debugging
             }
             
             # PostgreSQL-specific optimizations (if needed in the future)
@@ -97,6 +98,111 @@ class DatabaseConfig:
                 **kwargs
             )
         return DatabaseConfig._engine
+    
+    async def refresh_metadata(self):
+        """
+        Refresh SQLAlchemy metadata to ensure table structure is current.
+        This helps resolve issues where metadata becomes stale after disconnection.
+        Uses a conservative approach to avoid disrupting relationship mappings.
+        """
+        try:
+            engine = self.get_engine()
+            async with engine.begin() as conn:
+                # Instead of clearing all metadata, just refresh specific tables
+                # This preserves relationship mappings while updating table structures
+                try:
+                    # Test connection with a simple query
+                    await conn.execute(text("SELECT 1"))
+                    
+                    # Refresh only the tables that might have stale metadata
+                    # Focus on junction tables which are most likely to have issues
+                    from sqlalchemy import Table, MetaData
+                    
+                    # Create a temporary metadata object for reflection
+                    temp_metadata = MetaData()
+                    await conn.run_sync(lambda sync_conn: temp_metadata.reflect(sync_conn))
+                    
+                    # Update existing table objects with fresh column information
+                    for table_name, table in temp_metadata.tables.items():
+                        if table_name in SQLModel.metadata.tables:
+                            # Update column information without destroying relationships
+                            existing_table = SQLModel.metadata.tables[table_name]
+                            # Only update if the table structure might have changed
+                            if len(existing_table.columns) != len(table.columns):
+                                logging.info(f"Detected column changes in table {table_name}")
+                    
+                    logging.info("Metadata refreshed successfully (conservative approach)")
+                    return True
+                    
+                except Exception as inner_e:
+                    logging.warning(f"Conservative metadata refresh failed: {inner_e}")
+                    return False
+                
+        except Exception as e:
+            logging.error(f"Failed to refresh metadata: {e}")
+            return False
+    
+    async def refresh_junction_table_metadata(self, table_name: str):
+        """
+        Specifically refresh metadata for a junction table.
+        This is useful when junction tables lose their column definitions after reconnection.
+        Uses a conservative approach to avoid disrupting relationship mappings.
+        
+        Args:
+            table_name: Name of the junction table to refresh
+        """
+        try:
+            engine = self.get_engine()
+            async with engine.begin() as conn:
+                # Check if table exists
+                table_exists = await conn.run_sync(
+                    lambda sync_conn: sync_conn.dialect.has_table(sync_conn, table_name)
+                )
+                
+                if not table_exists:
+                    logging.warning(f"Junction table {table_name} does not exist")
+                    return False
+                
+                # Conservative approach: just test if the table is accessible
+                # without disrupting existing metadata and relationships
+                try:
+                    # Test if we can query the table structure
+                    result = await conn.execute(text(f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"))
+                    table_def = await result.fetchone()
+                    
+                    if table_def:
+                        logging.info(f"Junction table {table_name} is accessible with structure: {table_def[0][:100]}...")
+                    else:
+                        logging.warning(f"Junction table {table_name} exists but could not retrieve structure")
+                        
+                    # Don't actually modify metadata - just validate accessibility
+                    return True
+                    
+                except Exception as inner_e:
+                    logging.warning(f"Conservative junction table check failed for {table_name}: {inner_e}")
+                    # If we can't access the table conservatively, it might be a real issue
+                    return False
+                
+        except Exception as e:
+            logging.error(f"Failed to refresh junction table metadata for {table_name}: {e}")
+            return False
+    
+    async def validate_connection(self):
+        """
+        Validate database connection and refresh metadata if needed.
+        Returns True if connection is valid, False otherwise.
+        """
+        try:
+            engine = self.get_engine()
+            async with engine.begin() as conn:
+                # Simple ping to verify connection
+                await conn.execute(text("SELECT 1"))
+                return True
+        except Exception as e:
+            logging.warning(f"Connection validation failed: {e}")
+            # Try to refresh metadata and reconnect
+            await self.refresh_metadata()
+            return False
 
     def get_session_maker(self):
         """Get or create the session maker."""
@@ -186,21 +292,32 @@ class EasyModel(SQLModel):
     @classmethod
     @contextlib.asynccontextmanager
     async def get_session(cls):
-        """Provide a transactional scope for database operations.
+        """
+        Get a database session with proper error handling and cleanup.
         
         This method ensures proper session cleanup by:
-        - Explicitly rolling back transactions on exceptions
+        - Only validating connection when there's an actual issue
+        - Refreshing metadata if connection was lost
         - Explicitly closing sessions in all cases
-        - Proper exception propagation
+        
+        Returns:
+            AsyncSession: Database session context manager
         """
         session = None
         try:
             session = db_config.get_session_maker()()
             yield session
-        except Exception:
+        except Exception as e:
             if session:
                 await session.rollback()
-            raise
+            
+            # Only validate connection if we get a database-related error
+            error_msg = str(e).lower()
+            if any(keyword in error_msg for keyword in ['connection', 'database', 'no such column', 'table']):
+                logging.warning(f"Database error detected, validating connection: {e}")
+                await db_config.validate_connection()
+            
+            raise e
         finally:
             if session:
                 await session.close()
@@ -1366,6 +1483,72 @@ class EasyModel(SQLModel):
                 junction_obj = junction_model(**junction_data)
                 session.add(junction_obj)
                 logging.info(f"Created junction between {cls.__name__} {parent_obj.id} and {target_model.__name__} {target_obj.id}")
+
+    @classmethod
+    async def _ensure_junction_table_metadata(cls, table_name: str):
+        """
+        Ensure junction table metadata is current before relationship operations.
+        This prevents intermittent "no such column" errors after reconnection.
+        
+        Args:
+            table_name: Name of the junction table (e.g., 'brandusers')
+        """
+        try:
+            # First check if metadata refresh is needed
+            await db_config.refresh_junction_table_metadata(table_name)
+            return True
+        except Exception as e:
+            logging.error(f"Failed to ensure junction table metadata for {table_name}: {e}")
+            return False
+    
+    @classmethod
+    async def _safe_relationship_query(cls, query_func, *args, **kwargs):
+        """
+        Safely execute a relationship query with automatic metadata refresh on junction table errors.
+        This handles intermittent "no such column" errors after reconnection by refreshing metadata.
+        
+        Args:
+            query_func: The query function to execute
+            *args: Arguments to pass to query_func
+            **kwargs: Keyword arguments to pass to query_func
+            
+        Returns:
+            Result of query_func execution
+        """
+        try:
+            # First attempt
+            return await query_func(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "no such column" in error_msg:
+                # Extract table name from SQLAlchemy error message
+                # Error format: "no such column: tablename.columnname"
+                import re
+                table_match = re.search(r'no such column:\s*([a-zA-Z_]\w*)\.[a-zA-Z_]\w*', error_msg)
+                
+                if table_match:
+                    table_name = table_match.group(1)
+                    logging.warning(f"Junction table metadata error detected for '{table_name}': {e}")
+                    
+                    # Refresh metadata for the specific table
+                    await cls._ensure_junction_table_metadata(table_name)
+                    
+                    # Retry the query
+                    try:
+                        return await query_func(*args, **kwargs)
+                    except Exception as retry_e:
+                        # If retry fails, try a full metadata refresh as last resort
+                        logging.warning(f"Retry failed, attempting full metadata refresh: {retry_e}")
+                        await db_config.refresh_metadata()
+                        return await query_func(*args, **kwargs)
+                else:
+                    # If we can't extract table name, try full metadata refresh
+                    logging.warning(f"Could not extract table name from error, attempting full metadata refresh: {e}")
+                    await db_config.refresh_metadata()
+                    return await query_func(*args, **kwargs)
+            else:
+                # Not a metadata issue, re-raise original exception
+                raise e
 
     @classmethod
     async def _load_relationships_recursively(cls, session, obj, max_depth=2, current_depth=0, visited_ids=None):

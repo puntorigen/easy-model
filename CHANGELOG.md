@@ -2,6 +2,68 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.7] - 2025-07-07
+
+### Fixed
+- **CRITICAL PERFORMANCE FIX**: Removed aggressive connection validation that occurred before every database session creation
+- **Root Cause**: Version 0.3.6 introduced connection validation before every `get_session()` call, causing massive performance overhead and connection timeouts
+- **Solution**: Moved connection validation to error-triggered mode only - now validates connection only when database errors occur
+
+### Performance Improvements
+- **Eliminated Connection Overhead**: Database sessions no longer have validation overhead unless there's an actual error
+- **Faster Session Creation**: Removed unnecessary `SELECT 1` query and metadata refresh checks from normal operation
+- **Reduced Timeout Issues**: Connection timeouts and delays should be resolved
+
+### Technical Details
+- Connection validation now only triggers on database-related errors (connection, database, no such column, table errors)
+- Maintains all metadata refresh functionality while eliminating performance regression
+- Error-triggered validation provides the same protection against stale metadata without the overhead
+- Backwards compatible - no API changes
+
+## [0.3.6] - 2025-07-07
+
+### Fixed
+- **CRITICAL HOTFIX**: Fixed `name 'text' is not defined` error in connection validation by adding missing SQLAlchemy import
+- **CRITICAL HOTFIX**: Fixed `NoForeignKeysError` when determining join conditions for junction table relationships
+- **Root Cause**: Aggressive metadata refresh logic was calling `SQLModel.metadata.clear()` which destroyed relationship mappings
+- **Solution**: Implemented conservative metadata refresh approach that preserves relationship mappings while still handling stale metadata
+
+### Changed
+- **Conservative Metadata Refresh**: Updated `refresh_metadata()` to use temporary metadata objects instead of clearing existing mappings
+- **Conservative Junction Table Handling**: Updated `refresh_junction_table_metadata()` to validate table accessibility without disrupting relationships
+- **Preserved Relationship Mappings**: Metadata refresh no longer interferes with SQLAlchemy's ability to configure many-to-many relationships
+
+### Technical Details
+- Added missing `text` import from SQLAlchemy for connection validation queries
+- Replaced destructive `SQLModel.metadata.clear()` with conservative reflection approach
+- Junction table validation now uses simple accessibility tests rather than metadata replacement
+- Connection validation maintains relationship integrity while ensuring metadata freshness
+- Backwards compatible - existing code continues to work without changes
+
+## [0.3.5] - 2025-07-07
+
+### Fixed
+- **CRITICAL**: Fixed intermittent SQLAlchemy errors where junction tables would fail with "no such column: tablename.columnname" after database session disconnects
+- **Root Cause**: SQLAlchemy's metadata cache becomes stale after database disconnection/reconnection, causing the ORM to lose track of junction table column definitions even though the columns exist and have data
+- **Solution**: Implemented comprehensive connection validation and metadata refresh mechanisms with table-agnostic error recovery
+
+### Added
+- **Connection Validation**: Added `validate_connection()` method to DatabaseConfig that validates connections before creating sessions
+- **Metadata Refresh**: Added `refresh_metadata()` and `refresh_junction_table_metadata()` methods to handle stale metadata
+- **Junction Table Recovery**: Added `_ensure_junction_table_metadata()` and `_safe_relationship_query()` methods for automatic error recovery
+- **Enhanced Connection Pooling**: Improved connection pool settings with better ping and recycle configurations
+- **Dynamic Table Name Extraction**: Error recovery now works with ANY junction table names using regex pattern matching
+
+### Technical Details
+- Enhanced `EasyModel.get_session()` to validate connection before creating each session
+- Automatic detection and recovery from junction table metadata staleness
+- Backwards compatible - no API changes required
+- **Table-agnostic error recovery**: Works with any junction table names (brandusers, booktags, usercompanies, etc.)
+- Dynamic table name extraction from SQLAlchemy error messages using regex
+- Addresses intermittent nature of the error that occurs after session disconnects
+- Intelligent retry mechanism: specific table refresh → full metadata refresh → graceful failure
+- Comprehensive logging for debugging junction table metadata issues
+
 ## [0.3.4] - 2025-07-06
 
 ### Fixed

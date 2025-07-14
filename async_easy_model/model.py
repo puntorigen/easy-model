@@ -1594,8 +1594,14 @@ class EasyModel(SQLModel):
                 # Get the loaded relationship
                 related_objs = getattr(refreshed_obj, rel_name, None)
                 
-                # Update the object's relationship
-                setattr(obj, rel_name, related_objs)
+                # Update the object's relationship without marking as dirty
+                # Use direct __dict__ assignment to bypass SQLAlchemy change tracking
+                # This prevents updated_at from being modified during SELECT operations
+                if hasattr(obj, '__dict__'):
+                    obj.__dict__[rel_name] = related_objs
+                else:
+                    # Fallback for objects without __dict__
+                    object.__setattr__(obj, rel_name, related_objs)
                 
                 # Skip if no related objects
                 if related_objs is None:

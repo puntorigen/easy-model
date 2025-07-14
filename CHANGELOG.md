@@ -2,6 +2,21 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.8] - 2025-07-14
+
+### Fixed
+- **CRITICAL BUG FIX**: Fixed SELECT operations incorrectly updating `updated_at` timestamps
+- **Root Cause**: `_load_relationships_recursively()` was using `setattr()` to assign relationship data, which marked objects as "dirty" in SQLAlchemy's change tracking system
+- **Impact**: Any model with `updated_at` field queried with `include_relationships=True` (default) would have its timestamp overwritten with current time instead of preserving original database value
+- **Solution**: Replaced `setattr()` with direct `__dict__` assignment to bypass SQLAlchemy change tracking during relationship loading
+
+### Technical Details
+- Changed `setattr(obj, rel_name, related_objs)` to `obj.__dict__[rel_name] = related_objs` in `_load_relationships_recursively()`
+- Added fallback `object.__setattr__` for objects without `__dict__` attribute
+- SELECT operations now preserve original database timestamps
+- Only actual UPDATE operations modify `updated_at` timestamps as intended
+- Maintains all existing functionality without breaking changes
+
 ## [0.3.7] - 2025-07-07
 
 ### Fixed

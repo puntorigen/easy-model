@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="async-easy-model",
-    version="0.3.7",
+    version="0.3.8",
     author="Pablo Schaffner",
     author_email="pablo@puntorigen.com",
     description="A simplified SQLModel-based ORM for async database operations",

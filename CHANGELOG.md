@@ -2,6 +2,26 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.3.9] - 2025-07-18
+
+### Added
+- **NEW FEATURE**: Configurable default for `include_relationships` flag
+- **Configuration**: Added `default_include_relationships` parameter to `configure_sqlite()` and `configure_postgres()` methods
+- **Global Control**: Set a default value for relationship loading behavior across all model query methods
+- **Backward Compatible**: Maintains existing behavior (defaults to `True`) if not configured
+
+### Changed
+- **Method Signatures**: Updated all query methods to accept `include_relationships: Optional[bool] = None` instead of `bool = True`
+- **Affected Methods**: `all()`, `first()`, `limit()`, `get_by_id()`, `get_by_attribute()`, `insert()`, `update()`, `to_dict()`, `select()`
+- **Behavior**: When `include_relationships=None` is passed, methods now use the global default from `db_config.default_include_relationships`
+- **Override Support**: Explicit `True` or `False` values still override the global default per method call
+
+### Technical Details
+- Added `default_include_relationships` attribute to `DatabaseConfig` class
+- Added `_get_default_include_relationships()` helper function for centralized default access
+- All query methods now check for `None` and fall back to configured default
+- Fallback to `True` when database is not configured (maintains backward compatibility)
+
 ## [0.3.8] - 2025-07-14
 
 ### Fixed

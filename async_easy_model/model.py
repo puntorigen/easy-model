@@ -30,11 +30,18 @@ class DatabaseConfig:
         self.postgres_port: str = os.getenv('POSTGRES_PORT', '5432')
         self.postgres_db: str = os.getenv('POSTGRES_DB', 'postgres')
         self.sqlite_file: str = os.getenv('SQLITE_FILE', 'database.db')
+        self.default_include_relationships: bool = True
 
-    def configure_sqlite(self, db_file: str) -> None:
-        """Configure SQLite database."""
+    def configure_sqlite(self, db_file: str, default_include_relationships: bool = True) -> None:
+        """Configure SQLite database.
+        
+        Args:
+            db_file: Path to the SQLite database file
+            default_include_relationships: Default value for include_relationships parameter in query methods
+        """
         self.db_type = "sqlite"
         self.sqlite_file = db_file
+        self.default_include_relationships = default_include_relationships
         self._reset_engine()
 
     def configure_postgres(
@@ -43,9 +50,19 @@ class DatabaseConfig:
         password: str = None,
         host: str = None,
         port: str = None,
-        database: str = None
+        database: str = None,
+        default_include_relationships: bool = True
     ) -> None:
-        """Configure PostgreSQL database."""
+        """Configure PostgreSQL database.
+        
+        Args:
+            user: PostgreSQL username
+            password: PostgreSQL password
+            host: PostgreSQL host
+            port: PostgreSQL port
+            database: PostgreSQL database name
+            default_include_relationships: Default value for include_relationships parameter in query methods
+        """
         self.db_type = "postgresql"
         if user:
             self.postgres_user = user
@@ -57,6 +74,7 @@ class DatabaseConfig:
             self.postgres_port = port
         if database:
             self.postgres_db = database
+        self.default_include_relationships = default_include_relationships
         self._reset_engine()
 
     def _reset_engine(self) -> None:
@@ -278,6 +296,21 @@ def _get_normalized_datetime() -> datetime:
     # For SQLite and others, return timezone-aware datetime (backward compatibility)
     return utc_now
 
+def _get_default_include_relationships() -> bool:
+    """
+    Get the default include_relationships value from the global db_config.
+    
+    Returns:
+        The default include_relationships value, or True if db_config is not configured
+    """
+    global db_config
+    
+    if db_config is not None:
+        return db_config.default_include_relationships
+    
+    # Fallback to True if db_config is not configured
+    return True
+
 class EasyModel(SQLModel):
     """
     Base model class providing common async database operations.
@@ -416,7 +449,7 @@ class EasyModel(SQLModel):
     @classmethod
     async def all(
         cls: Type[T], 
-        include_relationships: bool = True, 
+        include_relationships: Optional[bool] = None, 
         order_by: Optional[Union[str, List[str]]] = None,
         max_depth: int = 2
     ) -> List[T]:
@@ -424,7 +457,7 @@ class EasyModel(SQLModel):
         Retrieve all records of this model.
         
         Args:
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
             max_depth: Maximum depth for loading nested relationships
@@ -432,13 +465,16 @@ class EasyModel(SQLModel):
         Returns:
             A list of all model instances
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         return await cls.select({}, all=True, include_relationships=include_relationships, 
                                order_by=order_by, max_depth=max_depth)
     
     @classmethod
     async def first(
         cls: Type[T], 
-        include_relationships: bool = True, 
+        include_relationships: Optional[bool] = None, 
         order_by: Optional[Union[str, List[str]]] = None,
         max_depth: int = 2
     ) -> Optional[T]:
@@ -446,7 +482,7 @@ class EasyModel(SQLModel):
         Retrieve the first record of this model.
         
         Args:
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
             max_depth: Maximum depth for loading nested relationships
@@ -454,6 +490,9 @@ class EasyModel(SQLModel):
         Returns:
             The first model instance or None if no records exist
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         return await cls.select({}, first=True, include_relationships=include_relationships, 
                                order_by=order_by, max_depth=max_depth)
     
@@ -461,7 +500,7 @@ class EasyModel(SQLModel):
     async def limit(
         cls: Type[T], 
         count: int, 
-        include_relationships: bool = True, 
+        include_relationships: Optional[bool] = None, 
         order_by: Optional[Union[str, List[str]]] = None,
         max_depth: int = 2
     ) -> List[T]:
@@ -470,7 +509,7 @@ class EasyModel(SQLModel):
         
         Args:
             count: Maximum number of records to return
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
             max_depth: Maximum depth for loading nested relationships
@@ -478,21 +517,27 @@ class EasyModel(SQLModel):
         Returns:
             A list of model instances
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         return await cls.select({}, all=True, include_relationships=include_relationships, 
                                order_by=order_by, limit=count, max_depth=max_depth)
 
     @classmethod
-    async def get_by_id(cls: Type[T], id: int, include_relationships: bool = True) -> Optional[T]:
+    async def get_by_id(cls: Type[T], id: int, include_relationships: Optional[bool] = None) -> Optional[T]:
         """
         Retrieve a record by its primary key.
         
         Args:
             id: The primary key value
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             
         Returns:
             The model instance or None if not found
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         async with cls.get_session() as session:
             if include_relationships:
                 # Get all relationship attributes, including auto-detected ones
@@ -522,7 +567,7 @@ class EasyModel(SQLModel):
     async def get_by_attribute(
         cls: Type[T], 
         all: bool = False, 
-        include_relationships: bool = True,
+        include_relationships: Optional[bool] = None,
         order_by: Optional[Union[str, List[str]]] = None,
         **kwargs
     ) -> Union[Optional[T], List[T]]:
@@ -531,7 +576,7 @@ class EasyModel(SQLModel):
         
         Args:
             all: If True, return all matching records, otherwise return only the first one
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             order_by: Field(s) to order by. Can be a string or list of strings.
                       Prefix with '-' for descending order (e.g. '-created_at')
             **kwargs: Attribute filters (field=value)
@@ -539,6 +584,9 @@ class EasyModel(SQLModel):
         Returns:
             A single model instance, a list of instances, or None if not found
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         async with cls.get_session() as session:
             statement = select(cls).filter_by(**kwargs)
             
@@ -582,18 +630,21 @@ class EasyModel(SQLModel):
             return result.scalars().first()
 
     @classmethod
-    async def insert(cls: Type[T], data: Union[Dict[str, Any], List[Dict[str, Any]]], include_relationships: bool = True, max_depth: int = 2) -> Union[T, List[T]]:
+    async def insert(cls: Type[T], data: Union[Dict[str, Any], List[Dict[str, Any]]], include_relationships: Optional[bool] = None, max_depth: int = 2) -> Union[T, List[T]]:
         """
         Insert one or more records.
         
         Args:
             data: Dictionary of field values or a list of dictionaries for multiple records
-            include_relationships: If True, return the instance(s) with relationships loaded
+            include_relationships: If True, return the instance(s) with relationships loaded. If None, uses the default from db_config
             max_depth: Maximum depth for loading nested relationships
             
         Returns:
             The created model instance(s)
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         if not data:
             return None
             
@@ -895,18 +946,21 @@ class EasyModel(SQLModel):
         return related_obj
 
     @classmethod
-    async def update(cls: Type[T], data: Dict[str, Any], criteria: Dict[str, Any], include_relationships: bool = True) -> Optional[T]:
+    async def update(cls: Type[T], data: Dict[str, Any], criteria: Dict[str, Any], include_relationships: Optional[bool] = None) -> Optional[T]:
         """
         Update an existing record identified by criteria.
         
         Args:
             data: Dictionary of updated field values
             criteria: Dictionary of field values to identify the record to update
-            include_relationships: If True, return the updated instance with relationships loaded
+            include_relationships: If True, return the updated instance with relationships loaded. If None, uses the default from db_config
         
         Returns:
             The updated model instance
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         # Store many-to-many relationship data for later processing
         many_to_many_data = {}
         many_to_many_rels = cls._get_many_to_many_relationships()
@@ -1122,17 +1176,20 @@ class EasyModel(SQLModel):
                 logging.error(f"Error deleting {cls.__name__}: {e}")
                 raise
 
-    def to_dict(self, include_relationships: bool = True, max_depth: int = 4) -> Dict[str, Any]:
+    def to_dict(self, include_relationships: Optional[bool] = None, max_depth: int = 4) -> Dict[str, Any]:
         """
         Convert the model instance to a dictionary.
         
         Args:
-            include_relationships: If True, include relationship fields in the output
+            include_relationships: If True, include relationship fields in the output. If None, uses the default from db_config
             max_depth: Maximum depth for nested relationships (to prevent circular references)
             
         Returns:
             Dictionary representation of the model
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         # Get basic fields
         result = self.model_dump()
         
@@ -1196,7 +1253,7 @@ class EasyModel(SQLModel):
         criteria: Dict[str, Any] = None,
         all: bool = False,
         first: bool = False,
-        include_relationships: bool = True,
+        include_relationships: Optional[bool] = None,
         order_by: Optional[Union[str, List[str]]] = None,
         max_depth: int = 2,
         limit: Optional[int] = None
@@ -1208,7 +1265,7 @@ class EasyModel(SQLModel):
             criteria: Dictionary of field values to filter by
             all: If True, return all matching records. If False, return only the first match.
             first: If True, return only the first record (equivalent to all=False)
-            include_relationships: If True, eagerly load all relationships
+            include_relationships: If True, eagerly load all relationships. If None, uses the default from db_config
             order_by: Field(s) to order by. Can be a string or list of strings.
                      Prefix with '-' for descending order (e.g. '-created_at')
             max_depth: Maximum depth for loading nested relationships (when include_relationships=True)
@@ -1218,6 +1275,9 @@ class EasyModel(SQLModel):
         Returns:
             A single model instance, a list of instances, or None if not found
         """
+        if include_relationships is None:
+            include_relationships = _get_default_include_relationships()
+        
         # Default to empty criteria if None provided
         if criteria is None:
             criteria = {}

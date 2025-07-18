@@ -401,6 +401,41 @@ db_config.configure_postgres(
 db_config.set_connection_url("postgresql+asyncpg://user:password@localhost:5432/database")
 ```
 
+### Configurable Default for Relationship Loading
+
+**New in v0.3.9**: You can now set a global default for `include_relationships` behavior across all query methods:
+
+```python
+# Configure with default_include_relationships=False for better performance
+db_config.configure_sqlite("database.db", default_include_relationships=False)
+
+# Or for PostgreSQL
+db_config.configure_postgres(
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="5432",
+    database="your_database",
+    default_include_relationships=False  # Set global default
+)
+```
+
+**Benefits:**
+- **Performance**: Set `default_include_relationships=False` to avoid loading relationships by default, improving query performance
+- **Flexibility**: Still override per method call with explicit `True` or `False` values
+- **Backward Compatible**: Defaults to `True` if not specified, maintaining existing behavior
+
+**Usage Examples:**
+```python
+# With default_include_relationships=False configured:
+users = await User.all()  # No relationships loaded (faster)
+users_with_rels = await User.all(include_relationships=True)  # Override to load relationships
+
+# With default_include_relationships=True configured (default behavior):
+users = await User.all()  # Relationships loaded
+users_no_rels = await User.all(include_relationships=False)  # Override to skip relationships
+```
+
 ## Documentation
 
 For more detailed documentation, please visit the [GitHub repository](https://github.com/puntorigen/easy-model) or refer to the [DOCS.md](https://github.com/puntorigen/easy-model/blob/master/DOCS.md) file.

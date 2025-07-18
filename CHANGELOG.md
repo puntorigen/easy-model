@@ -2,6 +2,28 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.4.0] - 2025-07-18
+
+### Added
+- **NEW FEATURE**: MySQL database support
+- **Configuration**: Added `configure_mysql()` method to configure MySQL database connections
+- **Connection Support**: Added MySQL connection URL generation using `mysql+aiomysql://` format
+- **Environment Variables**: Added support for `MYSQL_USER`, `MYSQL_PASSWORD`, `MYSQL_HOST`, `MYSQL_PORT`, `MYSQL_DB` environment variables
+- **Dependencies**: Added `aiomysql>=0.1.1` to package dependencies for automatic MySQL driver installation
+- **Keywords**: Added "mysql" to package keywords for better discoverability
+
+### Changed
+- **Database Types**: Updated `db_type` Literal to include `"mysql"` alongside `"postgresql"` and `"sqlite"`
+- **Configuration**: Extended `DatabaseConfig` class with MySQL-specific configuration attributes
+- **Connection URLs**: Enhanced `get_connection_url()` method to handle MySQL connection strings
+
+### Technical Details
+- MySQL configuration follows the same pattern as PostgreSQL and SQLite
+- Uses `aiomysql` as the async MySQL driver (SQLAlchemy compatible)
+- Supports all standard MySQL connection parameters: user, password, host, port, database
+- Includes `default_include_relationships` parameter for consistent API across all database types
+- Maintains full backward compatibility with existing PostgreSQL and SQLite configurations
+
 ## [0.3.9] - 2025-07-18
 
 ### Added

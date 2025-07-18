@@ -23,13 +23,18 @@ class DatabaseConfig:
     _session_maker = None
 
     def __init__(self):
-        self.db_type: Literal["postgresql", "sqlite"] = "postgresql"
+        self.db_type: Literal["postgresql", "sqlite", "mysql"] = "postgresql"
         self.postgres_user: str = os.getenv('POSTGRES_USER', 'postgres')
         self.postgres_password: str = os.getenv('POSTGRES_PASSWORD', 'postgres')
         self.postgres_host: str = os.getenv('POSTGRES_HOST', 'localhost')
         self.postgres_port: str = os.getenv('POSTGRES_PORT', '5432')
         self.postgres_db: str = os.getenv('POSTGRES_DB', 'postgres')
         self.sqlite_file: str = os.getenv('SQLITE_FILE', 'database.db')
+        self.mysql_user: str = os.getenv('MYSQL_USER', 'root')
+        self.mysql_password: str = os.getenv('MYSQL_PASSWORD', 'mysql')
+        self.mysql_host: str = os.getenv('MYSQL_HOST', 'localhost')
+        self.mysql_port: str = os.getenv('MYSQL_PORT', '3306')
+        self.mysql_db: str = os.getenv('MYSQL_DB', 'mysql')
         self.default_include_relationships: bool = True
 
     def configure_sqlite(self, db_file: str, default_include_relationships: bool = True) -> None:
@@ -77,6 +82,39 @@ class DatabaseConfig:
         self.default_include_relationships = default_include_relationships
         self._reset_engine()
 
+    def configure_mysql(
+        self,
+        user: str = None,
+        password: str = None,
+        host: str = None,
+        port: str = None,
+        database: str = None,
+        default_include_relationships: bool = True
+    ) -> None:
+        """Configure MySQL database.
+        
+        Args:
+            user: MySQL username
+            password: MySQL password
+            host: MySQL host
+            port: MySQL port
+            database: MySQL database name
+            default_include_relationships: Default value for include_relationships parameter in query methods
+        """
+        self.db_type = "mysql"
+        if user:
+            self.mysql_user = user
+        if password:
+            self.mysql_password = password
+        if host:
+            self.mysql_host = host
+        if port:
+            self.mysql_port = port
+        if database:
+            self.mysql_db = database
+        self.default_include_relationships = default_include_relationships
+        self._reset_engine()
+
     def _reset_engine(self) -> None:
         """Reset the engine and session maker so that a new configuration takes effect."""
         DatabaseConfig._engine = None
@@ -86,7 +124,12 @@ class DatabaseConfig:
         """Get the connection URL based on the current configuration."""
         if self.db_type == "sqlite":
             return f"sqlite+aiosqlite:///{self.sqlite_file}"
-        else:
+        elif self.db_type == "mysql":
+            return (
+                f"mysql+aiomysql://{self.mysql_user}:{self.mysql_password}"
+                f"@{self.mysql_host}:{self.mysql_port}/{self.mysql_db}"
+            )
+        else:  # postgresql
             return (
                 f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
                 f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

@@ -16,7 +16,7 @@ A simplified SQLModel-based ORM for async database operations in Python. async-e
 - 🔗 Enhanced relationship handling with eager loading and nested operations
 - 🔍 Powerful query methods with flexible ordering support
 - ⚙️ Automatic relationship detection and bidirectional setup
-- 📱 Support for both PostgreSQL and SQLite databases
+- 📱 Support for PostgreSQL, SQLite, and MySQL databases
 - 🛠️ Built on top of SQLModel and SQLAlchemy for robust performance
 - 📝 Type hints for better IDE support
 - 🕒 Automatic `id`, `created_at` and `updated_at` fields provided by default
@@ -397,6 +397,15 @@ db_config.configure_postgres(
     database="your_database"
 )
 
+# MySQL Configuration
+db_config.configure_mysql(
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="3306",
+    database="your_database"
+)
+
 # Custom Connection URL
 db_config.set_connection_url("postgresql+asyncpg://user:password@localhost:5432/database")
 ```
@@ -415,6 +424,16 @@ db_config.configure_postgres(
     password="your_password",
     host="localhost",
     port="5432",
+    database="your_database",
+    default_include_relationships=False  # Set global default
+)
+
+# Or for MySQL
+db_config.configure_mysql(
+    user="your_user",
+    password="your_password",
+    host="localhost",
+    port="3306",
     database="your_database",
     default_include_relationships=False  # Set global default
 )

@@ -1746,7 +1746,7 @@ def _update_updated_at(session, flush_context, instances):
         if isinstance(instance, EasyModel) and hasattr(instance, "updated_at"):
             instance.updated_at = _get_normalized_datetime()
 
-async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = None):
+async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = None, has_auto_relationships: bool = None):
     """
     Initialize the database connection and create all tables.
     
@@ -1754,6 +1754,9 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
         migrate: Whether to run migrations (default: True)
         model_classes: Optional list of model classes to create/migrate
                       If None, will autodiscover all EasyModel subclasses
+        has_auto_relationships: Whether to enable auto-relationships (default: None)
+                               If None, will auto-detect availability
+                               If True/False, will force enable/disable
     
     Returns:
         Dictionary of migration results if migrations were applied
@@ -1761,13 +1764,23 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
     from . import db_config
     
     # Import auto_relationships functions with conditional import to avoid circular imports
+    auto_relationships_available = False
     try:
         from .auto_relationships import (_auto_relationships_enabled, process_auto_relationships,
                                         enable_auto_relationships, register_model_class,
                                         process_all_models_for_relationships)
-        has_auto_relationships = True
+        auto_relationships_available = True
     except ImportError:
-        has_auto_relationships = False
+        auto_relationships_available = False
+    
+    # Determine if we should use auto-relationships
+    # Priority: explicit parameter > auto-detection
+    if has_auto_relationships is not None:
+        use_auto_relationships = has_auto_relationships and auto_relationships_available
+        if has_auto_relationships and not auto_relationships_available:
+            logging.warning("Auto-relationships requested but not available (import failed)")
+    else:
+        use_auto_relationships = auto_relationships_available
     
     # Import migration system
     try:
@@ -1801,15 +1814,19 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
                     continue
     
     # Enable auto-relationships and register all models, but DON'T process relationships yet
-    if has_auto_relationships:
-        # Enable auto-relationships with patch_metaclass=False
-        enable_auto_relationships(patch_metaclass=False)
-        
-        # Register all model classes
-        for model_cls in model_classes:
-            register_model_class(model_cls)
-        
-        # NOTE: We'll process relationships AFTER tables are created to avoid missing column errors
+    if use_auto_relationships:
+        try:
+            # Enable auto-relationships with patch_metaclass=False
+            enable_auto_relationships(patch_metaclass=False)
+            
+            # Register all model classes
+            for model_cls in model_classes:
+                register_model_class(model_cls)
+            
+            # NOTE: We'll process relationships AFTER tables are created to avoid missing column errors
+        except Exception as e:
+            logging.warning(f"Failed to enable auto-relationships during initialization: {e}")
+            use_auto_relationships = False
     
     migration_results = {}
     
@@ -1836,9 +1853,13 @@ async def init_db(migrate: bool = True, model_classes: List[Type[SQLModel]] = No
             await conn.run_sync(SQLModel.metadata.create_all)
     
     # NOW process relationships after all tables have been created
-    if has_auto_relationships:
-        logging.info("Processing auto-relationships after database initialization")
-        process_all_models_for_relationships()
+    if use_auto_relationships:
+        try:
+            logging.info("Processing auto-relationships after database initialization")
+            process_all_models_for_relationships()
+        except Exception as e:
+            logging.warning(f"Failed to process auto-relationships after database initialization: {e}")
+            # Continue execution - don't let auto-relationships errors stop database initialization
     
     logging.info("Database initialized")
     return migration_results

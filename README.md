@@ -455,6 +455,39 @@ users = await User.all()  # Relationships loaded
 users_no_rels = await User.all(include_relationships=False)  # Override to skip relationships
 ```
 
+### Database Initialization Options
+
+**New in v0.4.1**: The `init_db()` function now supports configurable auto-relationships handling:
+
+```python
+# Default behavior (auto-detect auto-relationships availability)
+await init_db()
+
+# Force enable auto-relationships (will warn if not available)
+await init_db(has_auto_relationships=True)
+
+# Force disable auto-relationships
+await init_db(has_auto_relationships=False)
+
+# Combined with other parameters
+await init_db(
+    migrate=True,
+    model_classes=[User, Post, Comment],
+    has_auto_relationships=False
+)
+```
+
+**Benefits:**
+- **Control**: Explicitly enable or disable auto-relationships functionality
+- **Reliability**: Auto-relationships errors now issue warnings instead of stopping database initialization
+- **Flexibility**: Can be combined with migration control and specific model classes
+- **Robust**: Database initialization continues even if auto-relationships fail
+
+**Parameter Priority:**
+1. Explicit `has_auto_relationships` parameter (if provided)
+2. Auto-detection of auto-relationships availability (default)
+3. Fallback to available functionality
+
 ## Documentation
 
 For more detailed documentation, please visit the [GitHub repository](https://github.com/puntorigen/easy-model) or refer to the [DOCS.md](https://github.com/puntorigen/easy-model/blob/master/DOCS.md) file.

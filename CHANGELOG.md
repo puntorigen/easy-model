@@ -2,6 +2,31 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.4.1] - 2025-07-20
+
+### Added
+- **NEW FEATURE**: Configurable auto-relationships in `init_db()` function
+- **Parameter**: Added `has_auto_relationships: bool = None` parameter to `init_db()` method
+- **Control**: Explicit control over auto-relationships functionality - can be forced on/off or auto-detected
+- **Error Handling**: Comprehensive error handling for auto-relationships processing
+
+### Changed
+- **Robust Initialization**: Auto-relationships errors now issue warnings instead of stopping database initialization
+- **Graceful Degradation**: Database initialization continues even if auto-relationships fail
+- **Priority Logic**: Explicit `has_auto_relationships` parameter takes precedence over auto-detection
+
+### Fixed
+- **Reliability**: Database initialization no longer fails due to auto-relationships errors
+- **Error Recovery**: Auto-relationships failures are logged as warnings with detailed error messages
+- **Backward Compatibility**: Maintains full backward compatibility with existing code
+
+### Technical Details
+- Added `use_auto_relationships` variable to track final auto-relationships decision
+- Wrapped auto-relationships enabling and model registration in try/except blocks
+- Wrapped relationship processing after table creation in try/except blocks
+- Enhanced logging with specific error messages for debugging
+- Parameter priority: explicit parameter > auto-detection > fallback to available
+
 ## [0.4.0] - 2025-07-18
 
 ### Added

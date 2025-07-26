@@ -2,6 +2,23 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.4.2] - 2025-07-25
+
+### Fixed
+- **Parameter Order Robustness**: Enhanced `update()` method to handle flexible parameter order
+- **Backward Compatibility**: Users can now call `update()` with parameters in any order (positional or keyword)
+- **Error Prevention**: Prevents confusion when users pass `data` and `criteria` parameters in different orders
+- **Usage Flexibility**: Supports multiple calling patterns:
+  - `Model.update({"name": "new_name"}, {"id": 1})` (positional)
+  - `Model.update(data={"name": "new_name"}, criteria={"id": 1})` (keyword)
+  - `Model.update(criteria={"id": 1}, data={"name": "new_name"})` (mixed order)
+
+### Technical Details
+- Added robust parameter handling logic in `update()` method
+- Maintains full backward compatibility with existing code
+- Improved error messages for missing required parameters
+- Enhanced method documentation with usage examples
+
 ## [0.4.1] - 2025-07-20
 
 ### Added

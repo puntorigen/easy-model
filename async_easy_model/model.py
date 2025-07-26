@@ -989,7 +989,7 @@ class EasyModel(SQLModel):
         return related_obj
 
     @classmethod
-    async def update(cls: Type[T], data: Dict[str, Any], criteria: Dict[str, Any], include_relationships: Optional[bool] = None) -> Optional[T]:
+    async def update(cls: Type[T], data: Dict[str, Any] = None, criteria: Dict[str, Any] = None, include_relationships: Optional[bool] = None, **kwargs) -> Optional[T]:
         """
         Update an existing record identified by criteria.
         
@@ -997,10 +997,51 @@ class EasyModel(SQLModel):
             data: Dictionary of updated field values
             criteria: Dictionary of field values to identify the record to update
             include_relationships: If True, return the updated instance with relationships loaded. If None, uses the default from db_config
+            **kwargs: Alternative way to pass data and criteria as keyword arguments
         
         Returns:
             The updated model instance
+        
+        Examples:
+            # Method 1: Positional arguments
+            await Model.update({"name": "new_name"}, {"id": 1})
+            
+            # Method 2: Keyword arguments (recommended)
+            await Model.update(data={"name": "new_name"}, criteria={"id": 1})
+            
+            # Method 3: Mixed (for backward compatibility)
+            await Model.update(criteria={"id": 1}, data={"name": "new_name"})
         """
+        # Handle different parameter passing styles for backward compatibility
+        if data is None and criteria is None:
+            # Both passed as kwargs
+            data = kwargs.get('data')
+            criteria = kwargs.get('criteria')
+        elif data is not None and criteria is None:
+            # Check if first argument might actually be criteria (common mistake)
+            if 'data' in kwargs and 'criteria' not in kwargs:
+                # data passed as positional, criteria as kwarg
+                criteria = kwargs.get('data')
+            elif 'criteria' in kwargs:
+                # data passed as positional, criteria as kwarg
+                criteria = kwargs.get('criteria')
+        elif data is None and criteria is not None:
+            # criteria passed as positional, data as kwarg
+            data = kwargs.get('data')
+            
+        # Validate that we have both data and criteria
+        if data is None:
+            raise ValueError("Missing 'data' parameter: dictionary of field values to update")
+        if criteria is None:
+            raise ValueError("Missing 'criteria' parameter: dictionary of field values to identify the record to update")
+            
+        if not isinstance(data, dict):
+            raise TypeError(f"'data' must be a dictionary, got {type(data)}")
+        if not isinstance(criteria, dict):
+            raise TypeError(f"'criteria' must be a dictionary, got {type(criteria)}")
+            
+        # Log the update operation for debugging
+        logging.debug(f"Updating {cls.__name__} with criteria {criteria} and data keys: {list(data.keys())}")
         if include_relationships is None:
             include_relationships = _get_default_include_relationships()
         

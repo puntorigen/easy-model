@@ -12,12 +12,13 @@ This document provides comprehensive documentation for the async-easy-model pack
 6. [Relationship Handling](#relationship-handling)
 7. [Automatic Relationship Detection](#automatic-relationship-detection)
 8. [Query Methods](#query-methods)
-9. [Automatic Schema Migrations](#automatic-schema-migrations)
-10. [Database Visualization](#database-visualization)
-11. [Advanced Features](#advanced-features)
-12. [Standardized API Methods](#standardized-api-methods)
-13. [Examples](#examples)
-14. [API Reference](#api-reference)
+9. [SQLAlchemy/SQLModel Compatibility Layer](#sqlalchemysqlmodel-compatibility-layer)
+10. [Automatic Schema Migrations](#automatic-schema-migrations)
+11. [Database Visualization](#database-visualization)
+12. [Advanced Features](#advanced-features)
+13. [Standardized API Methods](#standardized-api-methods)
+14. [Examples](#examples)
+15. [API Reference](#api-reference)
 
 ## Installation
 
@@ -482,9 +483,398 @@ The ordering capabilities in async-easy-model are powerful and flexible:
 
 These ordering capabilities can be used with the `select()` method, making it easy to retrieve data in the desired sequence without additional sorting in application code.
 
+## SQLAlchemy/SQLModel Compatibility Layer
+
+**New in v0.4.3**: async-easy-model provides a comprehensive compatibility layer that allows you to use familiar SQLAlchemy/SQLModel query patterns alongside EasyModel's simplified API. This enables smooth migration from existing SQLAlchemy code and provides a familiar interface for developers with SQLAlchemy experience.
+
+### Overview
+
+The compatibility layer adds SQLAlchemy-style methods to your EasyModel classes through the `SQLAlchemyCompatMixin`. This provides:
+- Query builder pattern with chainable methods
+- Familiar instance and class methods
+- SQLAlchemy statement builders
+- Full async support throughout
+
+### Query Builder Pattern
+
+The `query()` method returns an `AsyncQuery` builder that allows method chaining similar to SQLAlchemy:
+
+```python
+from async_easy_model import EasyModel, Field
+from async_easy_model.compat import AsyncQuery  # For IDE type hints (optional)
+
+class User(EasyModel, table=True):
+    username: str = Field(index=True)
+    email: str
+    age: int
+    is_active: bool = Field(default=True)
+
+# Basic query pattern
+users = await User.query().filter(User.age > 25).all()
+user = await User.query().filter_by(username="john").first()
+
+# Complex chained queries
+active_adults = await (
+    User.query()
+    .filter(User.age >= 18)
+    .filter(User.is_active == True)
+    .order_by(User.username)
+    .limit(10)
+    .offset(5)
+    .all()
+)
+```
+
+### Query Building Methods
+
+#### filter(expression)
+Filter using SQLAlchemy-style expressions:
+```python
+# Single condition
+young_users = await User.query().filter(User.age < 30).all()
+
+# Multiple conditions (AND by default)
+filtered = await (
+    User.query()
+    .filter(User.age > 18)
+    .filter(User.is_active == True)
+    .all()
+)
+
+# Using SQLAlchemy operators
+from async_easy_model.compat import and_, or_
+
+complex_filter = await (
+    User.query()
+    .filter(or_(User.age < 18, User.age > 65))
+    .all()
+)
+```
+
+#### filter_by(**kwargs)
+Filter using keyword arguments:
+```python
+# Simple equality filters
+john = await User.query().filter_by(username="john").first()
+
+# Multiple fields
+active_john = await (
+    User.query()
+    .filter_by(username="john", is_active=True)
+    .first()
+)
+```
+
+#### order_by(field)
+Sort results:
+```python
+# Ascending order
+sorted_users = await User.query().order_by(User.username).all()
+
+# Descending order
+newest_first = await User.query().order_by(User.created_at.desc()).all()
+
+# Multiple fields
+multi_sort = await (
+    User.query()
+    .order_by(User.last_name)
+    .order_by(User.first_name)
+    .all()
+)
+```
+
+#### limit(n) and offset(n)
+Pagination support:
+```python
+# First 10 users
+first_page = await User.query().limit(10).all()
+
+# Second page (skip 10, take 10)
+second_page = await User.query().offset(10).limit(10).all()
+
+# Combined with ordering
+top_users = await (
+    User.query()
+    .order_by(User.score.desc())
+    .limit(5)
+    .all()
+)
+```
+
+#### join(relationship)
+Join related tables:
+```python
+# Join posts with users
+posts_with_users = await (
+    Post.query()
+    .join(User)
+    .filter(User.is_active == True)
+    .all()
+)
+```
+
+### Terminal Methods (Async)
+
+All terminal methods are async and execute the query:
+
+#### all()
+Get all matching records:
+```python
+users: List[User] = await User.query().filter(User.age > 18).all()
+```
+
+#### first()
+Get the first matching record or None:
+```python
+user: Optional[User] = await User.query().filter_by(username="john").first()
+```
+
+#### one()
+Get exactly one record (raises exception if not found or multiple found):
+```python
+try:
+    admin = await User.query().filter_by(role="admin").one()
+except NoResultFound:
+    print("No admin found")
+except MultipleResultsFound:
+    print("Multiple admins found")
+```
+
+#### one_or_none()
+Get one record or None (raises if multiple found):
+```python
+admin: Optional[User] = await User.query().filter_by(role="admin").one_or_none()
+```
+
+#### count()
+Count matching records:
+```python
+adult_count: int = await User.query().filter(User.age >= 18).count()
+```
+
+#### exists()
+Check if any records match:
+```python
+has_admins: bool = await User.query().filter_by(role="admin").exists()
+```
+
+### Instance Methods
+
+The compatibility layer adds familiar instance methods:
+
+```python
+user = await User.find(1)
+
+# Save changes to database
+user.email = "newemail@example.com"
+await user.save()
+
+# Refresh from database (discard local changes)
+await user.refresh()
+
+# Delete this record
+await user.delete_instance()
+```
+
+### Class Methods
+
+Additional class methods for common operations:
+
+#### create(**kwargs)
+Create and save a new record:
+```python
+user = await User.create(
+    username="jane",
+    email="jane@example.com",
+    age=25
+)
+```
+
+#### find(id)
+Find a record by primary key:
+```python
+user = await User.find(1)
+if user:
+    print(f"Found: {user.username}")
+```
+
+#### find_by(**kwargs)
+Find the first record matching criteria:
+```python
+user = await User.find_by(username="john")
+```
+
+#### exists(**kwargs)
+Check if any records match criteria:
+```python
+if await User.exists(email="john@example.com"):
+    print("Email already taken")
+```
+
+#### count(**kwargs)
+Count records matching criteria:
+```python
+active_count = await User.count(is_active=True)
+```
+
+#### bulk_create(data)
+Create multiple records efficiently:
+```python
+users = await User.bulk_create([
+    {"username": "user1", "email": "user1@example.com"},
+    {"username": "user2", "email": "user2@example.com"},
+    {"username": "user3", "email": "user3@example.com"}
+])
+```
+
+#### bulk_update(updates)
+Update multiple records efficiently:
+```python
+await User.bulk_update([
+    {"id": 1, "is_active": False},
+    {"id": 2, "is_active": False},
+    {"id": 3, "email": "newemail@example.com"}
+])
+```
+
+### SQLAlchemy Statement Builders
+
+For advanced use cases, access SQLAlchemy statement builders directly:
+
+```python
+from async_easy_model.compat import select, update, delete
+
+# Select statement
+stmt = User.select_stmt().where(User.age > 25)
+
+# Update statement  
+stmt = User.update_stmt().where(User.id == 1).values(is_active=False)
+
+# Delete statement
+stmt = User.delete_stmt().where(User.is_active == False)
+
+# Execute with session
+async with User.session() as session:
+    result = await session.execute(stmt)
+    await session.commit()
+```
+
+### Session Context Manager
+
+Use the session context manager for transaction control:
+
+```python
+async with User.session() as session:
+    # Multiple operations in a single transaction
+    user = await session.get(User, 1)
+    user.balance += 100
+    
+    new_transaction = Transaction(
+        user_id=user.id,
+        amount=100,
+        type="deposit"
+    )
+    session.add(new_transaction)
+    
+    await session.commit()  # Commit all changes together
+```
+
+### IDE Support
+
+The compatibility layer includes comprehensive type hints for IDE autocomplete support. However, due to Python's type system limitations with mixins, you may need to help your IDE understand the types:
+
+```python
+# Option 1: Add type annotation (recommended for full IDE support)
+from async_easy_model.compat import AsyncQuery
+
+query: AsyncQuery[User] = User.query()  # Type hint for IDE
+filtered = query.filter(User.age > 25)  # Full autocomplete!
+
+# Option 2: Direct instantiation
+query = AsyncQuery(User)  # IDE understands this immediately
+results = await query.filter(User.age > 25).all()
+
+# Option 3: Without type hints (works at runtime, limited IDE support)
+results = await User.query().filter(User.age > 25).all()  # Works perfectly
+```
+
+**Note**: The type annotation is purely optional and only needed for IDE autocomplete. The code works perfectly without it.
+
+### Mixed Usage Example
+
+You can seamlessly mix EasyModel's native API with SQLAlchemy patterns:
+
+```python
+from async_easy_model.compat import and_, or_
+
+# EasyModel native style - simple criteria matching
+users = await User.select({"is_active": True})
+
+# SQLAlchemy compatibility style - complex expressions
+users = await User.query().filter(User.age > 25).all()
+
+# Both can be used in the same codebase
+async def get_active_users():
+    # Use whichever style fits best
+    if use_complex_filter:
+        # Use compatibility layer for complex filters
+        return await User.query().filter(
+            and_(
+                User.is_active == True,
+                or_(User.role == "admin", User.age > 18)
+            )
+        ).all()
+    else:
+        # Use EasyModel for simple criteria
+        return await User.select({"is_active": True})
+```
+
+### Importing Utilities
+
+The compatibility layer re-exports common SQLAlchemy utilities:
+
+```python
+from async_easy_model.compat import (
+    select,      # SQLAlchemy select
+    update,      # SQLAlchemy update
+    delete,      # SQLAlchemy delete
+    and_,        # AND operator
+    or_,         # OR operator
+    func,        # SQL functions
+    selectinload,  # Eager loading
+    joinedload     # Join loading
+)
+
+# Use in queries
+from async_easy_model.compat import func
+
+avg_age = await User.query().with_entities(func.avg(User.age)).scalar()
+```
+
+### Migration from SQLAlchemy
+
+If you're migrating from SQLAlchemy/SQLModel, the compatibility layer makes the transition smooth:
+
+```python
+# Original SQLAlchemy code
+# session.query(User).filter(User.age > 25).all()
+
+# With async-easy-model compatibility layer
+await User.query().filter(User.age > 25).all()
+
+# Or gradually adopt EasyModel's simpler API
+await User.select({"age": {"$gt": 25}})
+```
+
+The compatibility layer ensures you can:
+1. Keep familiar SQLAlchemy patterns
+2. Gradually adopt EasyModel's simpler API
+3. Use both styles in the same codebase
+4. Maintain full async support throughout
+
 ## Automatic Schema Migrations
 
-EasyModel offers an automatic migration system that detects changes in your model definitions and applies appropriate migrations to your database schema without requiring manual migration scripts.
+async-easy-model includes a powerful automatic migration system that detects changes to your model definitions and automatically updates the database schema. This feature eliminates the need for manual migration scripts while ensuring your database stays in sync with your code.
 
 ### Overview
 

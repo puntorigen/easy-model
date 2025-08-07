@@ -12,8 +12,15 @@ from typing import Optional, Any
 from .model import EasyModel, init_db, db_config
 from sqlmodel import Field, Relationship as SQLModelRelationship
 
-__version__ = "0.4.2"
-__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships", "MigrationManager", "check_and_migrate_models", "ModelVisualizer"]
+# Import compatibility layer components for IDE support
+try:
+    from .compat import SQLAlchemyCompatMixin, AsyncQuery, select, update, delete, and_, or_, func, selectinload, joinedload
+    compat_exports = ["SQLAlchemyCompatMixin", "AsyncQuery", "select", "update", "delete", "and_", "or_", "func", "selectinload", "joinedload"]
+except ImportError:
+    compat_exports = []
+
+__version__ = "0.4.3"
+__all__ = ["EasyModel", "init_db", "db_config", "Field", "Relationship", "Relation", "enable_auto_relationships", "disable_auto_relationships", "process_auto_relationships", "MigrationManager", "check_and_migrate_models", "ModelVisualizer"] + compat_exports
 
 # Create a more user-friendly Relationship function
 def Relationship(

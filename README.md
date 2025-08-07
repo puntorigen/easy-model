@@ -331,6 +331,122 @@ recent_users = await User.limit(10)
 top_products = await Product.limit(5, order_by="-sales")
 ```
 
+## SQLAlchemy/SQLModel Compatibility Layer
+
+**New in v0.4.3**: async-easy-model now includes a compatibility layer that allows you to use familiar SQLAlchemy query patterns alongside EasyModel's simplified API. This enables smooth migration from existing SQLAlchemy/SQLModel code and provides a familiar interface for developers coming from SQLAlchemy backgrounds.
+
+### Query Builder Pattern
+
+The compatibility layer provides a `query()` method that returns an AsyncQuery builder, allowing you to chain filter operations just like SQLAlchemy:
+
+```python
+from async_easy_model import EasyModel, Field
+from async_easy_model.compat import AsyncQuery  # For IDE type hints (optional)
+
+class User(EasyModel, table=True):
+    username: str = Field(index=True)
+    email: str
+    age: int
+    is_active: bool = Field(default=True)
+
+# Use the query builder pattern
+users = await User.query().filter(User.age > 25).all()
+user = await User.query().filter_by(username="john").first()
+
+# Chain multiple operations
+active_adults = await (
+    User.query()
+    .filter(User.age >= 18)
+    .filter(User.is_active == True)
+    .order_by(User.username)
+    .limit(10)
+    .all()
+)
+
+# IDE Support Tip (Optional):
+# For full IDE autocomplete, add a type annotation:
+query: AsyncQuery[User] = User.query()  # Optional - only for IDE support
+filtered = query.filter(User.age > 25)  # IDE will show all available methods
+```
+
+### Available Methods
+
+The compatibility layer provides all common SQLAlchemy patterns:
+
+#### Query Building Methods
+- `filter()` - Filter using SQLAlchemy expressions
+- `filter_by()` - Filter using keyword arguments
+- `order_by()` - Sort results
+- `limit()` - Limit number of results
+- `offset()` - Skip results
+- `join()` - Join related tables
+
+#### Terminal Methods (async)
+- `all()` - Get all matching records
+- `first()` - Get first matching record
+- `one()` - Get exactly one record (raises if not found)
+- `one_or_none()` - Get one record or None
+- `count()` - Count matching records
+- `exists()` - Check if any records match
+
+#### Instance Methods
+```python
+user = await User.find(1)
+await user.save()           # Save changes to database
+await user.refresh()        # Refresh from database
+await user.delete_instance() # Delete this record
+```
+
+#### Class Methods
+```python
+# Create new record
+user = await User.create(username="jane", email="jane@example.com")
+
+# Find records
+user = await User.find(1)  # By ID
+user = await User.find_by(username="john")  # By field
+
+# Bulk operations
+users = await User.bulk_create([
+    {"username": "user1", "email": "user1@example.com"},
+    {"username": "user2", "email": "user2@example.com"}
+])
+
+# Check existence
+exists = await User.exists(username="john")
+
+# Count records
+count = await User.count()
+```
+
+### SQLAlchemy Statement Builders
+
+For advanced use cases, you can access SQLAlchemy statement builders:
+
+```python
+# Get SQLAlchemy select statement
+stmt = User.select_stmt().where(User.age > 25)
+
+# Use with session
+async with User.session() as session:
+    result = await session.execute(stmt)
+    users = result.scalars().all()
+```
+
+### Mixed Usage Example
+
+You can freely mix EasyModel's simplified API with SQLAlchemy patterns:
+
+```python
+# EasyModel style
+users = await User.select({"age": {"$gt": 25}})
+
+# SQLAlchemy compatibility style
+users = await User.query().filter(User.age > 25).all()
+
+# Both work seamlessly together!
+```
+
 ## Enhanced Relationship Handling
 
 Using the models defined earlier, here's how to work with relationships:

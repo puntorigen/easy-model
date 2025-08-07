@@ -2,7 +2,7 @@ from sqlmodel import SQLModel, Field, select, Relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, Session, selectinload, joinedload
 from sqlalchemy import update as sqlalchemy_update, event, desc, asc, text
-from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple
+from typing import Type, TypeVar, Optional, Any, List, Dict, Literal, Union, Set, Tuple, TYPE_CHECKING
 import contextlib
 import os
 import sys
@@ -14,6 +14,20 @@ import logging
 import re
 
 T = TypeVar("T", bound="EasyModel")
+
+# Import compatibility layer
+try:
+    from .compat import SQLAlchemyCompatMixin
+    if TYPE_CHECKING:
+        from .compat import AsyncQuery
+except ImportError:
+    # Fallback if compat module is not available
+    class SQLAlchemyCompatMixin:
+        pass
+    if TYPE_CHECKING:
+        from typing import Generic
+        class AsyncQuery(Generic[T]):
+            pass
 
 # Global database configuration instance (forward declaration)
 db_config = None
@@ -354,9 +368,10 @@ def _get_default_include_relationships() -> bool:
     # Fallback to True if db_config is not configured
     return True
 
-class EasyModel(SQLModel):
+class EasyModel(SQLModel, SQLAlchemyCompatMixin):
     """
     Base model class providing common async database operations.
+    Now with SQLAlchemy/SQLModel compatibility layer for seamless integration.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     created_at: Optional[datetime] = Field(default_factory=_get_normalized_datetime)
@@ -567,7 +582,20 @@ class EasyModel(SQLModel):
                                order_by=order_by, limit=count, max_depth=max_depth)
 
     @classmethod
-    async def get_by_id(cls: Type[T], id: int, include_relationships: Optional[bool] = None) -> Optional[T]:
+    def query(cls: Type[T]) -> 'AsyncQuery[T]':
+        """
+        Create a query builder that mimics SQLAlchemy's query interface.
+        Returns an AsyncQuery object for chaining filter operations.
+        
+        Usage:
+            users = await User.query().filter(User.is_active == True).all()
+            user = await User.query().filter_by(username="john").first()
+        """
+        from .compat import AsyncQuery
+        return AsyncQuery(cls)
+    
+    @classmethod
+    async def get_by_id(cls: Type[T], id: int, include_relationships: Optional[bool] = None, max_depth=2) -> Optional[T]:
         """
         Retrieve a record by its primary key.
         

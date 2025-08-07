@@ -2,6 +2,36 @@
 
 All notable changes to the async-easy-model package will be documented in this file.
 
+## [0.4.3] - 2025-08-06
+
+### Added
+- **SQLAlchemy/SQLModel Compatibility Layer**: New compatibility layer enabling seamless use of SQLAlchemy patterns
+  - `query()` method returning AsyncQuery builder for familiar SQLAlchemy-style queries
+  - Chainable filter methods: `filter()`, `filter_by()`, `order_by()`, `limit()`, `offset()`, `join()`
+  - Terminal async methods: `all()`, `first()`, `one()`, `one_or_none()`, `count()`, `exists()`
+  - Instance methods: `save()`, `refresh()`, `delete_instance()`
+  - Class methods: `create()`, `find()`, `find_by()`, `bulk_create()`, `bulk_update()`
+  - Statement builders: `select_stmt()`, `update_stmt()`, `delete_stmt()`
+  - Re-exported SQLAlchemy utilities: `select`, `update`, `delete`, `and_`, `or_`, `func`
+
+### Enhanced
+- **IDE Support**: Improved type hints and annotations for better autocomplete
+  - Added `py.typed` marker file for type checker compatibility
+  - Created comprehensive type stub file (`compat.pyi`)
+  - Export compatibility symbols in package `__init__.py`
+  - Optional type annotations for full IDE autocomplete support
+
+### Documentation
+- Added comprehensive compatibility layer examples in `examples/compatibility_demo.py`
+- IDE support documentation with practical workarounds
+- Migration guide for transitioning from pure SQLAlchemy/SQLModel
+
+### Technical Details
+- Compatibility layer implemented as mixin (`SQLAlchemyCompatMixin`)
+- AsyncQuery generic class for type-safe query building
+- Full backward compatibility - no breaking changes
+- Optional type annotations for IDE support: `query: AsyncQuery[Model] = Model.query()`
+
 ## [0.4.2] - 2025-07-25
 
 ### Fixed
